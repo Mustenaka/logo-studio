@@ -142,13 +142,14 @@ pub struct DownloadProgress {
 #[derive(Debug)]
 pub enum DownloadError {
     /// HTTP 401 / 403 — needs a HF access token
-    AuthRequired { url: String, model_id: String },
+    AuthRequired { url: String, #[allow(dead_code)] model_id: String },
     /// HTTP 404 — file path or repo name is wrong
     NotFound { url: String },
     /// Any other error
     Other(String),
 }
 
+#[allow(dead_code)]
 impl DownloadError {
     /// Convert to the JSON-serialisable shape sent to the frontend.
     pub fn to_payload(&self) -> serde_json::Value {

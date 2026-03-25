@@ -20,7 +20,7 @@ use crate::ai_gen::{
         save_hf_token, DownloadError,
     },
     model_registry::{catalog, find, ModelDef},
-    pipeline::{run_pipeline, GenerateParams},
+    pipeline::run_pipeline,
 };
 
 // ── Response types ────────────────────────────────────────────────────────────
