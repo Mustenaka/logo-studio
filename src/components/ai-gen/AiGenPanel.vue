@@ -13,9 +13,12 @@ const customGuidance = ref<number | null>(null)
 const seed = ref<number | null>(null)
 const randomSeed = ref(true)
 
+// Token input state
+const tokenInput = ref('')
+const savingToken = ref(false)
+
 onMounted(() => aiGen.init())
 
-// When a model is selected, populate prompt placeholder
 watch(aiGen.selectedModel, (m) => {
   if (!prompt.value && m) prompt.value = ''
 })
@@ -44,6 +47,14 @@ function formatBytes(b: number): string {
   return `${(b / 1024).toFixed(0)} KB`
 }
 
+async function handleSaveToken() {
+  if (!tokenInput.value.trim()) return
+  savingToken.value = true
+  await aiGen.saveToken(tokenInput.value.trim())
+  tokenInput.value = ''
+  savingToken.value = false
+}
+
 async function handleGenerate() {
   if (!canGenerate.value || !aiGen.selectedModel.value) return
   await aiGen.generate({
@@ -70,6 +81,74 @@ function handleSelectModel(id: string) {
     <div v-if="aiGen.device.value" class="device-badge" :class="aiGen.device.value.kind">
       <span class="device-badge__dot" />
       <span>{{ aiGen.device.value.isAccelerated ? 'GPU · ' : 'CPU · ' }}{{ aiGen.device.value.name }}</span>
+    </div>
+
+    <!-- ── HF Token panel ─────────────────────────────────────────────── -->
+    <!-- Always visible as a collapsible settings section -->
+    <div class="token-section">
+      <div class="token-header" @click="aiGen.showTokenPanel.value = !aiGen.showTokenPanel.value">
+        <div class="token-header__left">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0110 0v4"/>
+          </svg>
+          <span>HuggingFace Token</span>
+          <span v-if="aiGen.hfTokenStatus.value.hasToken" class="token-badge token-badge--set">已设置</span>
+          <span v-else class="token-badge token-badge--unset">未设置</span>
+        </div>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          :style="{ transform: aiGen.showTokenPanel.value ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </div>
+
+      <!-- Auth-required alert (shown automatically after 401/403 error) -->
+      <div v-if="aiGen.authRequiredModelId.value && !aiGen.showTokenPanel.value" class="auth-alert" @click="aiGen.showTokenPanel.value = true">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <span>下载需要 Token，点击设置</span>
+      </div>
+
+      <Transition name="expand">
+        <div v-if="aiGen.showTokenPanel.value" class="token-body">
+          <!-- Current token display -->
+          <div v-if="aiGen.hfTokenStatus.value.hasToken" class="token-current">
+            <code class="token-masked">{{ aiGen.hfTokenStatus.value.masked }}</code>
+            <button class="btn-token-del" @click="aiGen.deleteToken()" title="删除 Token">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
+              </svg>
+            </button>
+          </div>
+
+          <p class="token-help">
+            需要 Token 才能下载部分模型。
+            <button class="link-btn" @click="aiGen.openHfTokenPage()">
+              在 HuggingFace 获取 Token →
+            </button>
+          </p>
+
+          <!-- Token input -->
+          <div class="token-input-row">
+            <input
+              v-model="tokenInput"
+              type="password"
+              class="token-input"
+              placeholder="hf_••••••••••••••••••••"
+              autocomplete="off"
+              @keydown.enter="handleSaveToken"
+            />
+            <button
+              class="btn-token-save"
+              :disabled="!tokenInput.trim() || savingToken"
+              @click="handleSaveToken"
+            >
+              {{ savingToken ? '保存中…' : '保存' }}
+            </button>
+          </div>
+        </div>
+      </Transition>
     </div>
 
     <!-- ── Model selector ────────────────────────────────────────────── -->
@@ -617,5 +696,181 @@ function handleSelectModel(id: string) {
   color: var(--text-disabled);
   text-align: center;
   line-height: 1.5;
+}
+
+/* ── HF Token section ─────────────────────────────────────────────── */
+.token-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.token-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--transition-fast);
+}
+.token-header:hover { background: var(--bg-card-hover); }
+
+.token-header__left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.token-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  letter-spacing: 0.03em;
+}
+.token-badge--set {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--success);
+}
+.token-badge--unset {
+  background: var(--bg-input);
+  color: var(--text-disabled);
+}
+
+.auth-alert {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(234, 179, 8, 0.1);
+  border-top: 1px solid rgba(234, 179, 8, 0.25);
+  color: #ca8a04;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.auth-alert:hover { background: rgba(234, 179, 8, 0.18); }
+
+.token-body {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+.token-current {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 8px;
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+.token-masked {
+  flex: 1;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  color: var(--success);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: none;
+}
+
+.btn-token-del {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-disabled);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.btn-token-del:hover {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+}
+
+.token-help {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: var(--accent-hover);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-family: inherit;
+}
+.link-btn:hover { color: var(--accent); }
+
+.token-input-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.token-input {
+  flex: 1;
+  padding: 5px 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+.token-input:focus { border-color: var(--accent); }
+
+.btn-token-save {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--transition-fast), opacity var(--transition-fast);
+  white-space: nowrap;
+}
+.btn-token-save:hover:not(:disabled) { background: var(--accent-hover); }
+.btn-token-save:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Expand transition */
+.expand-enter-active,
+.expand-leave-active {
+  transition: max-height 0.22s ease, opacity 0.18s ease;
+  max-height: 300px;
+  overflow: hidden;
+}
+.expand-enter-from,
+.expand-leave-to {
+  max-height: 0;
+  opacity: 0;
 }
 </style>

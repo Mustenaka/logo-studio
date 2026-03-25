@@ -1,10 +1,13 @@
 /// Tauri commands for AI logo generation.
 ///
-/// Commands exposed to the frontend:
-///   ai_gen_device_info   — returns current device (CPU/GPU) info
-///   ai_gen_list_models   — lists the built-in model catalog with download status
-///   ai_gen_download      — downloads a model (streams progress via events)
-///   ai_gen_generate      — runs the SD pipeline and returns a base64 PNG
+/// Commands:
+///   ai_gen_device_info    — current device (CPU/GPU) info
+///   ai_gen_list_models    — model catalog with download status
+///   ai_gen_download       — download a model (progress via events)
+///   ai_gen_generate       — run SD pipeline → base64 PNG
+///   ai_gen_get_hf_token   — read stored HF access token (masked)
+///   ai_gen_set_hf_token   — save HF access token to disk
+///   ai_gen_delete_hf_token — remove stored token
 
 use base64::{engine::general_purpose, Engine as _};
 use serde::Serialize;
@@ -12,7 +15,10 @@ use tauri::{AppHandle, Emitter};
 
 use crate::ai_gen::{
     device::{detect_device, DeviceInfo},
-    downloader::{download_model, get_paths, is_downloaded},
+    downloader::{
+        delete_hf_token, download_model, get_paths, is_downloaded, load_hf_token,
+        save_hf_token, DownloadError,
+    },
     model_registry::{catalog, find, ModelDef},
     pipeline::{run_pipeline, GenerateParams},
 };
@@ -35,7 +41,7 @@ pub struct ModelStatus {
     pub example_prompt: &'static str,
     pub has_lora: bool,
     pub lora_trigger_word: Option<&'static str>,
-    /// True when all weight files are present in the models directory
+    pub requires_token: bool,
     pub is_downloaded: bool,
 }
 
@@ -43,7 +49,6 @@ pub struct ModelStatus {
 #[serde(rename_all = "camelCase")]
 pub struct GenerateResult {
     pub success: bool,
-    /// base64-encoded PNG (no data-URL prefix)
     pub image: Option<String>,
     pub error: Option<String>,
     pub model_id: String,
@@ -51,49 +56,92 @@ pub struct GenerateResult {
     pub steps_taken: u32,
 }
 
+/// Result returned by `ai_gen_download`.
+///
+/// The frontend uses `errorKind` to decide whether to show the token UI:
+///   "auth_required" → show the HF token settings panel
+///   "not_found"     → show a path/repo error
+///   "error"         → generic error toast
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadResult {
+    pub success: bool,
+    pub error_kind: Option<String>,   // "auth_required" | "not_found" | "error"
+    pub error_message: Option<String>,
+    pub error_url: Option<String>,
+}
+
+/// HF token info returned to the frontend (never exposes the raw token).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HfTokenStatus {
+    /// True when a token is stored or available via env var.
+    pub has_token: bool,
+    /// Masked preview so the user can confirm which token is set.
+    /// Format: "hf_••••••••••••••••XXXX" (last 4 chars visible)
+    pub masked: Option<String>,
+}
+
 // ── Commands ──────────────────────────────────────────────────────────────────
 
-/// Return information about the device that will be used for inference.
 #[tauri::command]
 pub fn ai_gen_device_info() -> DeviceInfo {
     let (_, info) = detect_device();
     info
 }
 
-/// Return the full model catalog with per-model download status.
 #[tauri::command]
 pub fn ai_gen_list_models() -> Vec<ModelStatus> {
-    catalog()
-        .iter()
-        .map(|def| model_to_status(def))
-        .collect()
+    catalog().iter().map(model_to_status).collect()
 }
 
 /// Download all weight files for `model_id`.
 ///
-/// Emits `"ai-gen:download-progress"` events during download.
-/// Safe to call when model is already downloaded — files that exist are skipped.
+/// Returns a `DownloadResult` instead of `Result<(), String>` so the frontend
+/// can distinguish auth errors from other failures without parsing strings.
 #[tauri::command]
 pub async fn ai_gen_download(
     app: AppHandle,
     model_id: String,
-) -> Result<(), String> {
-    let def = find(&model_id)
-        .ok_or_else(|| format!("Unknown model id: {model_id}"))?;
+) -> DownloadResult {
+    let def = match find(&model_id) {
+        Some(d) => d,
+        None => return DownloadResult {
+            success: false,
+            error_kind: Some("error".into()),
+            error_message: Some(format!("Unknown model id: {model_id}")),
+            error_url: None,
+        },
+    };
 
-    download_model(&app, def).await?;
-    Ok(())
+    match download_model(&app, def).await {
+        Ok(_) => DownloadResult {
+            success: true,
+            error_kind: None,
+            error_message: None,
+            error_url: None,
+        },
+        Err(DownloadError::AuthRequired { url, .. }) => DownloadResult {
+            success: false,
+            error_kind: Some("auth_required".into()),
+            error_message: Some("需要 HuggingFace Access Token".into()),
+            error_url: Some(url),
+        },
+        Err(DownloadError::NotFound { url }) => DownloadResult {
+            success: false,
+            error_kind: Some("not_found".into()),
+            error_message: Some(format!("文件不存在 (404): {url}")),
+            error_url: Some(url),
+        },
+        Err(DownloadError::Other(msg)) => DownloadResult {
+            success: false,
+            error_kind: Some("error".into()),
+            error_message: Some(msg),
+            error_url: None,
+        },
+    }
 }
 
-/// Generate a logo PNG via Stable Diffusion.
-///
-/// Returns a `GenerateResult` where `image` is a base64-encoded PNG (not a
-/// data-URL — the frontend should prepend `data:image/png;base64,` itself).
-///
-/// Step progress is streamed via `"ai-gen:step-progress"` events:
-///   `{ modelId, step, totalSteps }`
-///
-/// Inference runs on a blocking thread so the Tauri event loop is not blocked.
 #[tauri::command]
 pub async fn ai_gen_generate(
     app: AppHandle,
@@ -106,19 +154,7 @@ pub async fn ai_gen_generate(
     height: Option<u32>,
     seed: Option<u64>,
 ) -> GenerateResult {
-    match run_generate(
-        app,
-        model_id.clone(),
-        prompt,
-        negative_prompt,
-        steps,
-        guidance,
-        width,
-        height,
-        seed,
-    )
-    .await
-    {
+    match run_generate(app, model_id.clone(), prompt, negative_prompt, steps, guidance, width, height, seed).await {
         Ok((image_b64, device_kind, steps_taken)) => GenerateResult {
             success: true,
             image: Some(image_b64),
@@ -138,6 +174,40 @@ pub async fn ai_gen_generate(
     }
 }
 
+/// Return whether a HF token is stored and a masked preview of it.
+#[tauri::command]
+pub fn ai_gen_get_hf_token() -> HfTokenStatus {
+    match load_hf_token() {
+        None => HfTokenStatus { has_token: false, masked: None },
+        Some(token) => {
+            // Show prefix + last 4 chars: "hf_••••••••••ABCD"
+            let suffix: String = token.chars().rev().take(4).collect::<String>()
+                .chars().rev().collect();
+            let stars = "•".repeat(token.len().saturating_sub(4).min(16));
+            let prefix = if token.starts_with("hf_") { "hf_" } else { "" };
+            HfTokenStatus {
+                has_token: true,
+                masked: Some(format!("{prefix}{stars}{suffix}")),
+            }
+        }
+    }
+}
+
+/// Save a HF access token to disk (persists across restarts).
+#[tauri::command]
+pub fn ai_gen_set_hf_token(token: String) -> Result<(), String> {
+    if token.trim().is_empty() {
+        return Err("Token cannot be empty".into());
+    }
+    save_hf_token(token.trim())
+}
+
+/// Remove the stored HF access token.
+#[tauri::command]
+pub fn ai_gen_delete_hf_token() -> Result<(), String> {
+    delete_hf_token()
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 async fn run_generate(
@@ -155,18 +225,16 @@ async fn run_generate(
         .ok_or_else(|| format!("Unknown model id: {model_id}"))?;
 
     let paths = get_paths(def)
-        .ok_or_else(|| format!("Model '{model_id}' is not downloaded yet"))?;
+        .ok_or_else(|| format!("模型 '{model_id}' 尚未下载"))?;
 
     let (device, dev_info) = detect_device();
     let device_kind = dev_info.kind.clone();
 
-    // Resolve inference parameters with sensible defaults
-    let n_steps = steps
-        .unwrap_or(if dev_info.is_accelerated {
-            def.default_steps_gpu
-        } else {
-            def.default_steps_cpu
-        }) as usize;
+    let n_steps = steps.unwrap_or(if dev_info.is_accelerated {
+        def.default_steps_gpu
+    } else {
+        def.default_steps_cpu
+    }) as usize;
 
     let guidance_scale = guidance.unwrap_or(def.default_guidance) as f64;
 
@@ -179,11 +247,8 @@ async fn run_generate(
         .next_multiple_of(8)
         .max(8);
 
-    // Prepend trigger word if defined
     let full_prompt = match def.lora.as_ref().and_then(|l| l.trigger_word) {
-        Some(trigger) if !prompt.contains(trigger) => {
-            format!("{trigger}, {prompt}")
-        }
+        Some(trigger) if !prompt.contains(trigger) => format!("{trigger}, {prompt}"),
         _ => prompt,
     };
 
@@ -196,9 +261,8 @@ async fn run_generate(
     let app_clone = app.clone();
     let mid = model_id.clone();
 
-    // Run inference on a blocking thread — SD is CPU-intensive
     let png_bytes = tokio::task::spawn_blocking(move || {
-        let params = GenerateParams {
+        run_pipeline(&paths, &crate::ai_gen::pipeline::GenerateParams {
             model_base,
             prompt: full_prompt,
             negative_prompt: neg,
@@ -208,24 +272,18 @@ async fn run_generate(
             height: img_h,
             seed,
             lora,
-        };
-
-        run_pipeline(&paths, &params, &device, |step, total| {
-            let _ = app_clone.emit(
-                "ai-gen:step-progress",
-                serde_json::json!({
-                    "modelId": mid,
-                    "step": step,
-                    "totalSteps": total,
-                }),
-            );
+        }, &device, |step, total| {
+            let _ = app_clone.emit("ai-gen:step-progress", serde_json::json!({
+                "modelId": mid,
+                "step": step,
+                "totalSteps": total,
+            }));
         })
     })
     .await
-    .map_err(|e| format!("Inference thread panic: {e}"))??;
+    .map_err(|e| format!("推理线程错误: {e}"))??;
 
-    let b64 = general_purpose::STANDARD.encode(&png_bytes);
-    Ok((b64, device_kind, n_steps as u32))
+    Ok((general_purpose::STANDARD.encode(&png_bytes), device_kind, n_steps as u32))
 }
 
 fn model_to_status(def: &ModelDef) -> ModelStatus {
@@ -234,10 +292,7 @@ fn model_to_status(def: &ModelDef) -> ModelStatus {
         id: def.id,
         name: def.name,
         description: def.description,
-        base: match def.base {
-            ModelBase::Sd15 => "sd15".into(),
-            ModelBase::SdXl => "sdxl".into(),
-        },
+        base: match def.base { ModelBase::Sd15 => "sd15".into(), ModelBase::SdXl => "sdxl".into() },
         size_mb: def.size_mb,
         min_ram_mb: def.min_ram_mb,
         default_steps_cpu: def.default_steps_cpu,
@@ -247,6 +302,8 @@ fn model_to_status(def: &ModelDef) -> ModelStatus {
         example_prompt: def.example_prompt,
         has_lora: def.lora.is_some(),
         lora_trigger_word: def.lora.as_ref().and_then(|l| l.trigger_word),
+        requires_token: def.requires_token
+            || def.lora.as_ref().map_or(false, |l| l.requires_token),
         is_downloaded: is_downloaded(def),
     }
 }

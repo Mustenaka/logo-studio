@@ -153,7 +153,7 @@ fn alpha_matte_refine(
     radius: u32,
 ) -> image::GrayImage {
     let (w, h) = rgba.dimensions();
-    let size = (w * h) as usize;
+    let _size = (w * h) as usize;
 
     let eroded  = fast_erode(rough, radius);
     let dilated = fast_dilate(rough, radius);

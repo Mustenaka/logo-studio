@@ -3,7 +3,8 @@ mod commands;
 mod sam2;
 
 use commands::ai_gen::{
-    ai_gen_device_info, ai_gen_download, ai_gen_generate, ai_gen_list_models,
+    ai_gen_delete_hf_token, ai_gen_device_info, ai_gen_download, ai_gen_generate,
+    ai_gen_get_hf_token, ai_gen_list_models, ai_gen_set_hf_token,
 };
 use commands::export::export_icon_set;
 use commands::image::{read_image, save_image};
@@ -35,6 +36,9 @@ pub fn run() {
             ai_gen_list_models,
             ai_gen_download,
             ai_gen_generate,
+            ai_gen_get_hf_token,
+            ai_gen_set_hf_token,
+            ai_gen_delete_hf_token,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

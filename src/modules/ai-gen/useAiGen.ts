@@ -1,24 +1,24 @@
 /**
  * AI Logo Generation composable
  *
- * Wraps the four Tauri commands (ai_gen_*) and the two backend events:
- *   "ai-gen:download-progress"  — per-file download progress
- *   "ai-gen:step-progress"      — per-denoising-step progress
+ * Tauri commands wrapped:
+ *   ai_gen_device_info, ai_gen_list_models
+ *   ai_gen_download      → emits "ai-gen:download-progress" events
+ *   ai_gen_generate      → emits "ai-gen:step-progress" events
+ *   ai_gen_get_hf_token, ai_gen_set_hf_token, ai_gen_delete_hf_token
  *
- * Usage:
- *   const aiGen = useAiGen()
- *   await aiGen.loadModels()
- *   await aiGen.downloadModel('sd15-logo-redmond')
- *   await aiGen.generate({ modelId: '...', prompt: '...' })
+ * Download results carry a structured errorKind so the UI can show the
+ * "Need HF Token" panel when the response is auth_required.
  */
 
 import { ref, computed, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { useAppStore } from '../../store/useAppStore'
 import { useImageEditor } from '../image-editor/useImageEditor'
 
-// ── Types matching the Rust side ──────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface DeviceInfo {
   kind: 'cpu' | 'cuda'
@@ -41,7 +41,15 @@ export interface ModelStatus {
   examplePrompt: string
   hasLora: boolean
   loraTriggerWord: string | null
+  requiresToken: boolean
   isDownloaded: boolean
+}
+
+export interface DownloadResult {
+  success: boolean
+  errorKind: 'auth_required' | 'not_found' | 'error' | null
+  errorMessage: string | null
+  errorUrl: string | null
 }
 
 export interface DownloadProgress {
@@ -56,6 +64,11 @@ export interface StepProgress {
   modelId: string
   step: number
   totalSteps: number
+}
+
+export interface HfTokenStatus {
+  hasToken: boolean
+  masked: string | null
 }
 
 export interface GenerateOptions {
@@ -75,7 +88,7 @@ export function useAiGen() {
   const appStore = useAppStore()
   const { importImageFromDataUrl } = useImageEditor()
 
-  // State
+  // Model & device state
   const device = ref<DeviceInfo | null>(null)
   const models = ref<ModelStatus[]>([])
   const selectedModelId = ref<string | null>(null)
@@ -83,19 +96,23 @@ export function useAiGen() {
   // Download state
   const downloadingModelId = ref<string | null>(null)
   const downloadProgress = ref<DownloadProgress | null>(null)
+  /** Set when a download fails with auth_required — triggers the token panel */
+  const authRequiredModelId = ref<string | null>(null)
 
   // Generation state
   const isGenerating = ref(false)
-  const generatingModelId = ref<string | null>(null)
   const stepProgress = ref<StepProgress | null>(null)
 
-  // Event listener cleanup handles
+  // HF Token state
+  const hfTokenStatus = ref<HfTokenStatus>({ hasToken: false, masked: null })
+  const showTokenPanel = ref(false)
+
   const unlisteners: Array<() => void> = []
 
-  // ── Initialisation ──────────────────────────────────────────────────────────
+  // ── Init ────────────────────────────────────────────────────────────────────
 
   async function init() {
-    await Promise.all([fetchDevice(), loadModels()])
+    await Promise.all([fetchDevice(), loadModels(), fetchTokenStatus()])
     setupEventListeners()
   }
 
@@ -103,35 +120,39 @@ export function useAiGen() {
     try {
       device.value = await invoke<DeviceInfo>('ai_gen_device_info')
     } catch (e) {
-      console.error('[AI-GEN] device info error:', e)
+      console.error('[AI-GEN] device info:', e)
     }
   }
 
   async function loadModels() {
     try {
       models.value = await invoke<ModelStatus[]>('ai_gen_list_models')
-      // Auto-select the first downloaded model, or the first model
       if (!selectedModelId.value) {
         const first = models.value.find(m => m.isDownloaded) ?? models.value[0]
         if (first) selectedModelId.value = first.id
       }
     } catch (e) {
-      console.error('[AI-GEN] list models error:', e)
+      console.error('[AI-GEN] list models:', e)
+    }
+  }
+
+  async function fetchTokenStatus() {
+    try {
+      hfTokenStatus.value = await invoke<HfTokenStatus>('ai_gen_get_hf_token')
+    } catch (e) {
+      console.error('[AI-GEN] token status:', e)
     }
   }
 
   function setupEventListeners() {
     listen<DownloadProgress>('ai-gen:download-progress', ({ payload }) => {
       downloadProgress.value = payload
-      // Update isDownloaded flag reactively when a model finishes
-      if (payload.percent >= 100) {
-        refreshModel(payload.modelId)
-      }
-    }).then(unlisten => unlisteners.push(unlisten))
+      if (payload.percent >= 100) refreshModel(payload.modelId)
+    }).then(u => unlisteners.push(u))
 
     listen<StepProgress>('ai-gen:step-progress', ({ payload }) => {
       stepProgress.value = payload
-    }).then(unlisten => unlisteners.push(unlisten))
+    }).then(u => unlisteners.push(u))
   }
 
   async function refreshModel(modelId: string) {
@@ -145,22 +166,32 @@ export function useAiGen() {
     } catch { /* ignore */ }
   }
 
-  onUnmounted(() => {
-    unlisteners.forEach(fn => fn())
-  })
+  onUnmounted(() => unlisteners.forEach(fn => fn()))
 
   // ── Actions ─────────────────────────────────────────────────────────────────
 
   async function downloadModel(modelId: string) {
     if (downloadingModelId.value) return
-
+    authRequiredModelId.value = null
     downloadingModelId.value = modelId
     downloadProgress.value = null
 
     try {
-      await invoke('ai_gen_download', { modelId })
-      await refreshModel(modelId)
-      appStore.showToast('模型下载完成', 'info')
+      const result = await invoke<DownloadResult>('ai_gen_download', { modelId })
+
+      if (result.success) {
+        await refreshModel(modelId)
+        appStore.showToast('模型下载完成', 'info')
+        return
+      }
+
+      if (result.errorKind === 'auth_required') {
+        authRequiredModelId.value = modelId
+        showTokenPanel.value = true
+        appStore.showToast('需要 HuggingFace Token，请在设置中填写', 'warn')
+      } else {
+        appStore.showToast(result.errorMessage ?? '下载失败', 'error')
+      }
     } catch (e: any) {
       appStore.showToast(`下载失败: ${e}`, 'error')
     } finally {
@@ -171,9 +202,7 @@ export function useAiGen() {
 
   async function generate(opts: GenerateOptions) {
     if (isGenerating.value) return
-
     isGenerating.value = true
-    generatingModelId.value = opts.modelId
     stepProgress.value = null
 
     try {
@@ -195,22 +224,50 @@ export function useAiGen() {
         seed: opts.seed ?? null,
       })
 
-      if (!result.success || !result.image) {
-        throw new Error(result.error ?? '生成失败')
-      }
+      if (!result.success || !result.image) throw new Error(result.error ?? '生成失败')
 
-      // Load the PNG into the canvas as a data URL
-      const dataUrl = `data:image/png;base64,${result.image}`
-      await importImageFromDataUrl(dataUrl)
-
+      await importImageFromDataUrl(`data:image/png;base64,${result.image}`)
       appStore.showToast(`生成完成（${result.stepsTaken} 步 · ${result.deviceKind.toUpperCase()}）`, 'info')
     } catch (e: any) {
       appStore.showToast(`生成失败: ${e}`, 'error')
     } finally {
       isGenerating.value = false
-      generatingModelId.value = null
       stepProgress.value = null
     }
+  }
+
+  // ── HF Token actions ────────────────────────────────────────────────────────
+
+  async function saveToken(token: string) {
+    try {
+      await invoke('ai_gen_set_hf_token', { token })
+      await fetchTokenStatus()
+      appStore.showToast('Token 已保存', 'info')
+      showTokenPanel.value = false
+      // Retry the download that triggered auth if applicable
+      if (authRequiredModelId.value) {
+        const mid = authRequiredModelId.value
+        authRequiredModelId.value = null
+        await downloadModel(mid)
+      }
+    } catch (e: any) {
+      appStore.showToast(`保存失败: ${e}`, 'error')
+    }
+  }
+
+  async function deleteToken() {
+    try {
+      await invoke('ai_gen_delete_hf_token')
+      await fetchTokenStatus()
+      appStore.showToast('Token 已删除', 'info')
+    } catch (e: any) {
+      appStore.showToast(`删除失败: ${e}`, 'error')
+    }
+  }
+
+  /** Open the HuggingFace token settings page in the system browser. */
+  function openHfTokenPage() {
+    openUrl('https://huggingface.co/settings/tokens').catch(console.error)
   }
 
   // ── Derived ─────────────────────────────────────────────────────────────────
@@ -221,11 +278,6 @@ export function useAiGen() {
 
   const isDownloading = computed(() => downloadingModelId.value !== null)
 
-  const downloadPercentForModel = computed(() => (modelId: string) => {
-    if (downloadingModelId.value !== modelId) return null
-    return downloadProgress.value?.percent ?? 0
-  })
-
   const stepPercentage = computed(() => {
     if (!stepProgress.value) return 0
     const { step, totalSteps } = stepProgress.value
@@ -233,23 +285,14 @@ export function useAiGen() {
   })
 
   return {
-    // State
-    device,
-    models,
-    selectedModelId,
-    selectedModel,
-    downloadingModelId,
-    downloadProgress,
-    isDownloading,
-    downloadPercentForModel,
-    isGenerating,
-    generatingModelId,
-    stepProgress,
-    stepPercentage,
+    device, models, selectedModelId, selectedModel,
+    downloadingModelId, downloadProgress, isDownloading,
+    authRequiredModelId,
+    isGenerating, stepProgress, stepPercentage,
+    hfTokenStatus, showTokenPanel,
     // Actions
-    init,
-    loadModels,
-    downloadModel,
-    generate,
+    init, loadModels,
+    downloadModel, generate,
+    saveToken, deleteToken, openHfTokenPage,
   }
 }

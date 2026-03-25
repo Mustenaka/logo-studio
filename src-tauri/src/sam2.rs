@@ -46,6 +46,7 @@ const SAM2_SIZE: u32 = 1024;
 
 // ── Internal types ───────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 struct ImageEncoding {
     embeddings: ArrayD<f32>,
     high_res_0: ArrayD<f32>,

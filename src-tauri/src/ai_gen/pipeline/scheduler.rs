@@ -117,6 +117,7 @@ impl DdimScheduler {
     }
 
     /// Sigma to multiply the initial random noise by (always 1.0 for DDIM).
+    #[allow(dead_code)]
     pub fn init_noise_sigma(&self) -> f32 {
         1.0
     }
