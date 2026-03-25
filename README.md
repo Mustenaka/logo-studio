@@ -1,176 +1,367 @@
 # Logo Studio Desktop
 
-> 面向设计师和开发者的桌面端 Logo 设计工具 —— 本地运行，无需联网，内置 AI 智能抠图。
+A cross-platform desktop logo design tool with offline AI-powered background removal, built on Tauri 2.0 + Vue 3 + Rust.
 
-**技术栈：** Tauri 2.0 · Vue 3 · TypeScript · Rust · SAM2 ONNX
-
----
-
-## 功能特性
-
-### 智能抠图（AI Segmentation）
-- 基于 **SAM2 ONNX** 模型，纯本地 CPU 推理，无需 Python 环境
-- 点击模式：点击主体一键生成精准遮罩
-- 自动模式：自动识别图像主体
-- Encoder 推理结果按图像缓存，多次点击无需重复编码，响应极快
-
-### 图像导入与编辑
-- 支持 PNG / JPG / SVG / WebP 拖拽导入
-- 裁剪、缩放、旋转、亮度、对比度、曝光、饱和度调整
-
-### 文字与排版
-- Logo 主文字（标题）+ Slogan（副标题）
-- 本地字体管理，分类：无衬线 / 科技 / 商业展示
-- 推荐使用 [Google Fonts](https://fonts.google.com/) / [FontShare](https://www.fontshare.com/) 商用免费字体
-
-### 背景与图标生成
-- 纯色 / 渐变背景（iOS 风、Material、Neon 等预设）
-- 圆角、阴影、内发光、亚克力（Glassmorphism）效果
-
-### 导出
-- PNG（多尺寸：1024 / 512 / 256）
-- ICO（Windows 图标）
-- SVG（计划中）
-
-### 国际化
-- 中文 / English（`vue-i18n`，JSON 语言包）
+[中文文档](./README_ZH.md)
 
 ---
 
-## 技术架构
+## Overview
+
+Logo Studio Desktop provides a local-first, privacy-preserving workflow for designing logos and generating multi-platform icon sets. The core feature is **SAM2 ONNX** inference running entirely on-device (CPU), with a multi-stage classical fallback for environments where the model is unavailable.
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Desktop runtime | Tauri 2.0 |
+| Frontend | Vue 3 · TypeScript · Vite 6 |
+| State management | Pinia 3 |
+| i18n | vue-i18n 11 (zh / en) |
+| Backend / inference | Rust (stable) |
+| ONNX inference | `ort` 2.0-rc.12 (ONNX Runtime) |
+| Image processing | `image` 0.25 (Rust) |
+| Tensor ops | `ndarray` 0.17 |
+
+---
+
+## Features
+
+- **AI Background Removal** — SAM2 ONNX runs locally; no cloud, no API key
+  - Click mode: provide foreground points → mask
+  - Auto mode: center-based heuristic → mask
+  - Multi-stage fallback: alpha passthrough → solid-color removal → flood-fill + alpha matting
+- **Image Editing** — Import PNG / JPG / WebP, adjust brightness, contrast, saturation, rotate, scale
+- **Typography** — Logo title + slogan layers, local font files, per-layer styling
+- **Background Generator** — 40+ presets (iOS-style, Material, Neon…), solid / linear / radial gradient, shadow, glassmorphism
+- **Icon Export** — Single PNG (1024 / 512 / 256 px) or full icon sets:
+  - Web (favicon 16 → 512 px)
+  - iOS (16 sizes)
+  - Android (7 DPI variants)
+  - macOS (10 Retina sizes)
+- **Internationalization** — Chinese (zh) and English (en) with runtime switching
+
+---
+
+## Architecture
 
 ```
-Frontend (Vue 3 + Vite)
-    ↕ Tauri IPC Commands
-Backend (Rust)
-    ├── SAM2 ONNX 推理 (ort 2.0)
-    ├── 图像处理 (image crate)
-    └── 文件导出
+┌──────────────────────────────────────────────────────────────┐
+│  Frontend (Vue 3 + Pinia)                                    │
+│                                                              │
+│  CenterCanvas ── LeftPanel ── RightPanel                     │
+│       │              │              │                        │
+│  useImageEditor  useSegmentation  useBackground              │
+│  useExport       useTypography                               │
+│                                                              │
+│  Pinia Stores:  canvasStore · appStore                       │
+│                 backgroundStore · typographyStore            │
+└───────────────────────┬──────────────────────────────────────┘
+                        │  Tauri IPC (invoke)
+┌───────────────────────▼──────────────────────────────────────┐
+│  Rust Backend                                                │
+│                                                              │
+│  commands/                                                   │
+│  ├─ segment.rs   SAM2 primary + 3-level fallback pipeline    │
+│  ├─ image.rs     read_image / save_image                     │
+│  └─ export.rs    export_icon_set (multi-size resize)         │
+│                                                              │
+│  sam2.rs         ONNX inference engine                       │
+│  ├─ Encoder  [1,3,1024,1024] → embeddings + FPN features    │
+│  ├─ Decoder  embeddings + prompts → pred_mask logits         │
+│  └─ Cache    per-image hash, reuse encoder output            │
+│                                                              │
+│  src-tauri/models/  (git-ignored — download separately)      │
+│  ├─ image_encoder.onnx + .data  (~815 MB)                    │
+│  └─ image_decoder.onnx + .data  (~18 MB)                     │
+└──────────────────────────────────────────────────────────────┘
 ```
-
-| 层级 | 技术 |
-|------|------|
-| 桌面框架 | Tauri 2.0 |
-| 前端框架 | Vue 3 + TypeScript |
-| 构建工具 | Vite 6 |
-| 状态管理 | Pinia |
-| 工具库 | VueUse |
-| 国际化 | vue-i18n 11 |
-| AI 推理 | ort 2.0 (ONNX Runtime) + ndarray |
-| 图像处理 | image 0.25 (Rust) |
 
 ---
 
-## 项目结构
+## SAM2 ONNX Integration
+
+### Model IO
+
+```
+Encoder
+  input:   "input"              [1, 3, 1024, 1024]  float32  NCHW
+  outputs: "image_embeddings"   [1, 256, 64, 64]
+           "high_res_features1" [1, 32, 256, 256]
+           "high_res_features2" [1, 64, 128, 128]
+
+Decoder
+  inputs:  "image_embed"        [1, 256, 64, 64]
+           "high_res_feats_0"   [1, 32, 256, 256]
+           "high_res_feats_1"   [1, 64, 128, 128]
+           "point_coords"       [1, N, 2]    float32  original image space
+           "point_labels"       [1, N]       float32  1=fg, 0=bg
+  outputs: "pred_mask"          [1, M, 256, 256]  logits
+           "mask_for_mem"       [1, M, 1024, 1024] sigmoid
+```
+
+### Preprocessing
+
+1. Pad / resize longest dimension to 1024
+2. ImageNet normalization: mean = [0.485, 0.456, 0.406], std = [0.229, 0.224, 0.225]
+3. Transparent pixels (α < 30) replaced with neutral gray ≈ (127, 116, 104)
+
+### Encoder Caching
+
+Sessions are held in `OnceLock<Mutex<Session>>` (process-lifetime). Encoder output is cached keyed on an image hash; subsequent point clicks reuse the cached embeddings, giving instant re-segmentation on the same image.
+
+```rust
+static ENCODER: OnceLock<Mutex<Session>> = OnceLock::new();
+static DECODER: OnceLock<Mutex<Session>> = OnceLock::new();
+static CACHE:   OnceLock<Mutex<Option<EncoderCache>>> = OnceLock::new();
+```
+
+### Decoder Stability
+
+Graph optimization is explicitly disabled (`GraphOptimizationLevel::Disable`) and `FusedGemmTransposeFusion` is suppressed — this optimization breaks inference when the point count varies between calls.
+
+### Fallback Pipeline
+
+```
+SAM2 (primary)
+  ↓ unavailable or error
+Level 1 — Alpha passthrough    image already has transparency → use as mask
+  ↓
+Level 2 — Solid bg detection   uniform background (variance < 28²) + color-distance matte
+  ↓
+Level 3 — Flood fill + matte   BFS from user points / centroid + alpha-matting refinement
+```
+
+Alpha matting: erode/dilate mask → trimap (fg / bg / unknown) → BFS nearest-neighbor color propagation → closed-form alpha per unknown pixel.
+
+---
+
+## SAM2 ONNX Model Export (`sam2-onnx-cpp`)
+
+The companion directory `../sam2-onnx-cpp` contains a standalone Python export pipeline and C++ ONNX Runtime wrapper used to produce the model files consumed by Logo Studio.
+
+### Export Pipeline
+
+```bash
+# 1. Create Python environment
+python -m venv sam2_env
+source sam2_env/bin/activate          # macOS / Linux
+# sam2_env\Scripts\Activate           # Windows
+
+pip install -r requirements_mac.txt   # or requirements_win.txt
+
+# 2. Fetch SAM2 source + checkpoints (sparse clone, no full history)
+./fetch_sparse.sh    # macOS / Linux
+fetch_sparse.bat     # Windows
+
+# 3. Export ONNX  (tiny | small | base_plus | large)
+python export/onnx_export.py --model_size base_plus
+```
+
+Output files land in `checkpoints/base_plus/`:
+
+| File | Size | Purpose |
+|---|---|---|
+| `image_encoder.onnx` | 4.2 MB | Hiera ViT backbone (weights external) |
+| `image_encoder.onnx.data` | ~815 MB | External encoder weights |
+| `image_decoder.onnx` | 882 KB | Mask decoder |
+| `image_decoder.onnx.data` | ~17 MB | External decoder weights |
+| `memory_attention.onnx` + `.data` | ~24 MB | Temporal attention (video mode) |
+| `memory_encoder.onnx` + `.data` | ~6 MB | Temporal memory encoder (video mode) |
+
+Logo Studio uses only the image encoder and decoder pairs. Copy them to `logo-studio/src-tauri/models/`.
+
+### C++ Wrapper (standalone testing)
+
+`sam2-onnx-cpp/cpp/` provides a native C++20 wrapper around ONNX Runtime for testing inference without Python:
+
+```bash
+cd sam2-onnx-cpp/cpp
+cmake -S . -B build_release -DCMAKE_BUILD_TYPE=Release \
+  -DOpenCV_DIR="/opt/homebrew/opt/opencv" \
+  -DONNXRUNTIME_DIR="/opt/onnxruntime-osx-arm64-1.23.2"
+cmake --build build_release
+cmake --install build_release --prefix ./package
+
+# Image segmentation test (seed points or bounding box prompt)
+./package/Segment.app/Contents/MacOS/Segment --onnx_test_image --prompt seed_points
+```
+
+**Build dependencies:** CMake ≥ 3.14, C++20 compiler, OpenCV, ONNX Runtime ≥ 1.22. GPU support available on Windows via CUDA 12.5 + cuDNN.
+
+---
+
+## Project Structure
 
 ```
 logo-studio/
-├── src/                        # 前端源码
+├── src/                         # Vue 3 frontend
 │   ├── components/
-│   │   ├── layout/             # 整体布局（三栏）
-│   │   └── ui/                 # 通用 UI 组件
+│   │   ├── layout/
+│   │   │   ├── CenterCanvas.vue
+│   │   │   ├── LeftPanel.vue
+│   │   │   └── RightPanel.vue
+│   │   └── ui/
+│   │       ├── GlassCard.vue
+│   │       ├── SliderControl.vue
+│   │       └── ThemeToggle.vue
 │   ├── modules/
-│   │   ├── segmentation/       # AI 抠图模块
-│   │   ├── image-editor/       # 图像编辑
-│   │   ├── background/         # 背景生成
-│   │   ├── typography/         # 字体与文字
-│   │   └── export/             # 导出系统
-│   ├── store/                  # Pinia 状态
-│   ├── i18n/                   # 语言包（zh / en）
-│   └── styles/                 # 全局样式
+│   │   ├── segmentation/useSegmentation.ts
+│   │   ├── image-editor/useImageEditor.ts
+│   │   ├── background/useBackground.ts
+│   │   ├── typography/useTypography.ts
+│   │   └── export/useExport.ts
+│   ├── store/
+│   │   ├── useAppStore.ts
+│   │   ├── useCanvasStore.ts
+│   │   ├── useBackgroundStore.ts
+│   │   └── useTypographyStore.ts
+│   ├── i18n/index.ts
+│   └── styles/
+│       ├── variables.css
+│       ├── theme.css
+│       ├── glass.css
+│       └── global.css
 │
-├── src-tauri/
+├── src-tauri/                   # Rust backend
 │   ├── src/
-│   │   ├── sam2.rs             # SAM2 ONNX 推理引擎
-│   │   ├── commands/
-│   │   │   ├── segment.rs      # 抠图 Tauri Command
-│   │   │   ├── image.rs        # 图像处理 Command
-│   │   │   └── export.rs       # 导出 Command
-│   │   └── lib.rs / main.rs
-│   ├── models/                 # SAM2 ONNX 模型文件（不入 git）
-│   │   ├── image_encoder.onnx
-│   │   ├── image_encoder.onnx.data
-│   │   ├── image_decoder.onnx
-│   │   └── image_decoder.onnx.data
+│   │   ├── main.rs
+│   │   ├── lib.rs
+│   │   ├── sam2.rs              # ONNX inference engine
+│   │   └── commands/
+│   │       ├── mod.rs
+│   │       ├── segment.rs       # Segmentation + fallback pipeline
+│   │       ├── image.rs         # File I/O commands
+│   │       └── export.rs        # Icon set export
+│   ├── models/                  # SAM2 ONNX files (git-ignored)
+│   ├── Cargo.toml
 │   └── tauri.conf.json
 │
-├── public/
-└── package.json
+├── .gitignore
+├── package.json
+├── vite.config.ts
+└── tsconfig.json
 ```
 
 ---
 
-## 开发环境搭建
+## Tauri IPC Commands
 
-### 前置依赖
+All commands are `async` and return `Result<T, String>`.
 
-- [Node.js](https://nodejs.org/) >= 18
-- [Rust](https://rustup.rs/) (stable)
-- [Tauri 前置依赖](https://tauri.app/start/prerequisites/)（Windows 需要 Microsoft C++ Build Tools / WebView2）
+### `segment_image`
 
-### 安装与启动
-
-```bash
-# 安装前端依赖
-npm install
-
-# 启动开发模式（热更新）
-npm run tauri dev
-
-# 构建生产包
-npm run tauri build
+```typescript
+invoke('segment_image', {
+  imageSrc:       string,            // data:image/png;base64,...
+  points:         { x, y, label }[], // canvas space [0, 1024]
+  mode:           'auto' | 'point',
+  tolerance?:     number,            // 0–200 → mapped to 0–150 internal
+  sam2Threshold?: number,            // 0.05–0.95, default 0.50
+  matteRadius?:   number,            // 1–30 px, default 8
+}) → SegmentResult { success, mask: string, error?, method }
+// method: 'sam2' | 'alpha' | 'color+matte' | 'flood_fill+matte' | 'error'
 ```
 
-### SAM2 模型文件
+### `read_image`
 
-模型文件体积较大（单文件 > 100 MB），不包含在仓库中，需手动下载后放置到 `src-tauri/models/` 目录：
+```typescript
+invoke('read_image', { path: string })
+→ { width, height, format, data: string }  // data = base64
+```
+
+### `save_image`
+
+```typescript
+invoke('save_image', { dataUrl: string, path: string })
+```
+
+### `export_icon_set`
+
+```typescript
+invoke('export_icon_set', {
+  dataUrl:   string,
+  outputDir: string,
+  entries:   { size: number, relpath: string }[],
+}) → number  // files written
+```
+
+### `check_sam2` (debug)
+
+```typescript
+invoke('check_sam2') → string  // 'exe=/path | sam2_available=true'
+```
+
+---
+
+## Setup
+
+### Prerequisites
+
+- Node.js ≥ 18
+- Rust stable (via rustup)
+- Tauri v2 prerequisites: <https://v2.tauri.app/start/prerequisites/>
+
+### Install & Run
+
+```bash
+cd logo-studio
+npm install
+npm run tauri dev
+```
+
+### SAM2 Model Files
+
+Model files are **not included in the repository** (total ~836 MB). Place them in `src-tauri/models/` before running:
 
 ```
 src-tauri/models/
 ├── image_encoder.onnx
-├── image_encoder.onnx.data
+├── image_encoder.onnx.data   (~815 MB)
 ├── image_decoder.onnx
-└── image_decoder.onnx.data
+└── image_decoder.onnx.data   (~17 MB)
 ```
 
-> 支持的文件名别名：`encoder.onnx` / `sam2_encoder.onnx` / `image_encoder.onnx`（decoder 同理），程序会自动查找。
->
-> 也可通过环境变量 `SAM2_MODELS_DIR` 指定模型目录。
+Override the model directory via environment variable:
+
+```bash
+SAM2_MODELS_DIR=/your/path npm run tauri dev
+```
+
+Accepted filenames (first match wins):
+
+| Role | Accepted names |
+|---|---|
+| Encoder | `encoder.onnx`, `sam2_encoder.onnx`, `image_encoder.onnx` |
+| Decoder | `decoder.onnx`, `sam2_decoder.onnx`, `image_decoder.onnx` |
+
+If models are absent the app starts normally and falls back to classical segmentation.
+
+### Build for Production
+
+```bash
+npm run tauri build
+```
+
+Bundles are emitted to `src-tauri/target/release/bundle/`.
 
 ---
 
-## SAM2 推理说明
+## Development Notes
 
-推理引擎位于 `src-tauri/src/sam2.rs`，采用 Encoder-Decoder 两阶段结构：
-
-| 阶段 | 模型 | 输入 | 输出 |
-|------|------|------|------|
-| Encoder | `image_encoder.onnx` | `[1, 3, 1024, 1024]` | embeddings + high_res_features |
-| Decoder | `image_decoder.onnx` | embeddings + point prompts | mask logits `[1, M, 256, 256]` |
-
-- 图像预处理：最长边 resize 到 1024，ImageNet 均值/方差归一化，透明像素填充为 ImageNet 中性灰
-- Encoder 输出按图像哈希缓存，同一张图多次点击无需重新编码
-- Decoder 禁用图优化（`ORT_DISABLE_ALL`），防止 FusedGemmTransposeFusion 因点数变化导致推理错误
+- Canvas is 800×800 px; zoom/pan handled in `useCanvasStore`
+- Background presets live in `useBackgroundStore` (~40 gradient definitions)
+- `useExport` renders a temporary off-screen canvas at target size before invoking `export_icon_set`
+- ONNX Runtime is downloaded automatically at build time via the `ort` crate feature `download-binaries`
+- Recommended VS Code extensions: `Vue.volar`, `tauri-apps.tauri-vscode`, `rust-lang.rust-analyzer`
 
 ---
 
-## 推荐开发工具
+## Related
 
-- [VS Code](https://code.visualstudio.com/)
-  - [Vue - Official](https://marketplace.visualstudio.com/items?itemName=Vue.volar)
-  - [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode)
-  - [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
-
----
-
-## 版本规划
-
-| 版本 | 目标 |
-|------|------|
-| v0.1 | 基础 UI · 图片导入 · SAM2 抠图 |
-| v0.2 | 字体 + Slogan · 背景生成 |
-| v0.3 | 导出系统 · 图像编辑 |
-| v1.0 | AI 生成接入 · 用户系统 |
+- [`../sam2-onnx-cpp`](../sam2-onnx-cpp) — SAM2 ONNX export pipeline and C++ inference wrapper
 
 ---
 
