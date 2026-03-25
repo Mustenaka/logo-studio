@@ -25,6 +25,94 @@ watch(() => canvasStore.imageLayer?.id, () => {
   showAdjust.value = false
 })
 
+// ── Fine-tune brush ────────────────────────────────────────────────────────────
+const viewportRef = ref<HTMLDivElement | null>(null)
+const isFinetuning = ref(false)
+const brushSize = ref(28)           // diameter in canvas-space pixels
+const brushMode = ref<'add' | 'erase'>('erase')
+const brushCursorX = ref(0)
+const brushCursorY = ref(0)
+const showBrushCursor = ref(false)
+const brushDisplayRadius = computed(() => brushSize.value / 2 * canvasStore.zoom)
+
+let maskCanvas: HTMLCanvasElement | null = null
+let maskCtx: CanvasRenderingContext2D | null = null
+let isPainting = false
+let lastMaskX = 0
+let lastMaskY = 0
+let rafPending = false
+
+function enterFinetune() {
+  if (!canvasStore.pendingMaskDataUrl) return
+  const img = new Image()
+  img.onload = () => {
+    maskCanvas = document.createElement('canvas')
+    maskCanvas.width = img.width
+    maskCanvas.height = img.height
+    maskCtx = maskCanvas.getContext('2d')!
+    maskCtx.drawImage(img, 0, 0)
+    isFinetuning.value = true
+  }
+  img.src = canvasStore.pendingMaskDataUrl
+}
+
+function exitFinetune() {
+  isFinetuning.value = false
+  isPainting = false
+  showBrushCursor.value = false
+  maskCanvas = null
+  maskCtx = null
+}
+
+function syncMaskToStore() {
+  if (!maskCanvas || rafPending) return
+  rafPending = true
+  requestAnimationFrame(() => {
+    rafPending = false
+    if (maskCanvas) canvasStore.setPendingMask(maskCanvas.toDataURL('image/png'))
+  })
+}
+
+function getMaskPos(e: MouseEvent): { mx: number; my: number; mr: number } | null {
+  const layer = canvasStore.imageLayer
+  if (!layer || !maskCanvas || !canvasRef.value) return null
+  const rect = canvasRef.value.getBoundingClientRect()
+  const cx = (e.clientX - rect.left) * (canvasStore.canvasWidth / rect.width)
+  const cy = (e.clientY - rect.top) * (canvasStore.canvasHeight / rect.height)
+  const mx = (cx - layer.x) / layer.width * maskCanvas.width
+  const my = (cy - layer.y) / layer.height * maskCanvas.height
+  const mr = Math.max(1, (brushSize.value / 2) * (maskCanvas.width / layer.width))
+  return { mx, my, mr }
+}
+
+function doPaint(mx: number, my: number, mr: number) {
+  if (!maskCtx) return
+  if (brushMode.value === 'erase') {
+    maskCtx.globalCompositeOperation = 'destination-out'
+    maskCtx.strokeStyle = 'rgba(0,0,0,1)'
+    maskCtx.fillStyle = 'rgba(0,0,0,1)'
+  } else {
+    maskCtx.globalCompositeOperation = 'source-over'
+    maskCtx.strokeStyle = 'rgba(255,255,255,1)'
+    maskCtx.fillStyle = 'rgba(255,255,255,1)'
+  }
+  maskCtx.lineWidth = mr * 2
+  maskCtx.lineCap = 'round'
+  maskCtx.lineJoin = 'round'
+  maskCtx.beginPath()
+  maskCtx.moveTo(lastMaskX, lastMaskY)
+  maskCtx.lineTo(mx, my)
+  maskCtx.stroke()
+  maskCtx.beginPath()
+  maskCtx.arc(mx, my, mr, 0, Math.PI * 2)
+  maskCtx.fill()
+  maskCtx.globalCompositeOperation = 'source-over'
+}
+
+watch(() => canvasStore.hasPendingMask, (val) => {
+  if (!val) exitFinetune()
+})
+
 // ── Image scale ───────────────────────────────────────────────────────────────
 const imageScalePct = computed(() => {
   const img = canvasStore.imageLayer
@@ -86,6 +174,18 @@ function isOverImage(cx: number, cy: number) {
 }
 
 function onMouseDown(e: MouseEvent) {
+  if (isFinetuning.value && e.button === 0) {
+    isPainting = true
+    const pos = getMaskPos(e)
+    if (pos) {
+      lastMaskX = pos.mx
+      lastMaskY = pos.my
+      doPaint(pos.mx, pos.my, pos.mr)
+      syncMaskToStore()
+    }
+    e.preventDefault()
+    return
+  }
   if (e.button === 1 || (e.button === 0 && e.altKey)) {
     isPanning = true
     lastPanX = e.clientX
@@ -104,6 +204,23 @@ function onMouseDown(e: MouseEvent) {
 }
 
 function onMouseMove(e: MouseEvent) {
+  if (isFinetuning.value) {
+    if (viewportRef.value) {
+      const rect = viewportRef.value.getBoundingClientRect()
+      brushCursorX.value = e.clientX - rect.left
+      brushCursorY.value = e.clientY - rect.top
+    }
+    if (isPainting) {
+      const pos = getMaskPos(e)
+      if (pos) {
+        doPaint(pos.mx, pos.my, pos.mr)
+        lastMaskX = pos.mx
+        lastMaskY = pos.my
+        syncMaskToStore()
+      }
+    }
+    return
+  }
   if (isPanning) {
     canvasStore.setPan(canvasStore.panX + e.clientX - lastPanX, canvasStore.panY + e.clientY - lastPanY)
     lastPanX = e.clientX
@@ -120,11 +237,26 @@ function onMouseMove(e: MouseEvent) {
 }
 
 function onMouseUp() {
+  if (isFinetuning.value && isPainting) {
+    isPainting = false
+    if (maskCanvas) canvasStore.setPendingMask(maskCanvas.toDataURL('image/png'))
+    return
+  }
   isPanning = false
   isDraggingImage = false
 }
 
 function onCanvasHover(e: MouseEvent) {
+  if (isFinetuning.value) {
+    canvasCursor.value = 'none'
+    showBrushCursor.value = true
+    if (viewportRef.value) {
+      const rect = viewportRef.value.getBoundingClientRect()
+      brushCursorX.value = e.clientX - rect.left
+      brushCursorY.value = e.clientY - rect.top
+    }
+    return
+  }
   if (canvasStore.segMode === 'point') { canvasCursor.value = 'crosshair'; return }
   if (isDraggingImage) { canvasCursor.value = 'grabbing'; return }
   const { cx, cy } = getCanvasXY(e)
@@ -133,6 +265,7 @@ function onCanvasHover(e: MouseEvent) {
 
 // ── Click → seg point ─────────────────────────────────────────────────────────
 function onCanvasClick(e: MouseEvent) {
+  if (isFinetuning.value) return
   if (canvasStore.segMode !== 'point' || !canvasStore.imageLayer) return
   const rect = canvasRef.value!.getBoundingClientRect()
   const scaleX = canvasStore.canvasWidth / rect.width
@@ -309,7 +442,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Canvas viewport -->
-    <div class="canvas-viewport">
+    <div class="canvas-viewport" ref="viewportRef">
       <div
         class="canvas-container"
         :style="{ transform: `translate(${canvasStore.panX}px, ${canvasStore.panY}px) scale(${canvasStore.zoom})` }"
@@ -324,9 +457,22 @@ onUnmounted(() => {
           :style="{ cursor: canvasCursor }"
           @click="onCanvasClick"
           @mousemove="onCanvasHover"
-          @mouseleave="canvasCursor = 'default'"
+          @mouseleave="isFinetuning ? (showBrushCursor = false) : (canvasCursor = 'default')"
         />
       </div>
+
+      <!-- Brush cursor overlay -->
+      <div
+        v-if="isFinetuning && showBrushCursor"
+        class="brush-cursor"
+        :class="{ 'brush-cursor--add': brushMode === 'add' }"
+        :style="{
+          left: `${brushCursorX - brushDisplayRadius}px`,
+          top: `${brushCursorY - brushDisplayRadius}px`,
+          width: `${brushDisplayRadius * 2}px`,
+          height: `${brushDisplayRadius * 2}px`,
+        }"
+      />
 
       <!-- Empty state -->
       <div v-if="!canvasStore.hasImage" class="canvas-empty">
@@ -457,16 +603,63 @@ onUnmounted(() => {
       <!-- ── Pending mask confirmation bar ── -->
       <Transition name="slide-up">
         <div v-if="canvasStore.hasPendingMask" class="confirm-bar">
+          <!-- Fine-tune brush row -->
+          <Transition name="expand">
+            <div v-if="isFinetuning" class="finetune-row">
+              <div class="ft-mode">
+                <button
+                  class="ft-mode-btn"
+                  :class="{ 'ft-mode-btn--active': brushMode === 'erase' }"
+                  @click="brushMode = 'erase'"
+                  title="擦除：在保留区域上涂抹来移除"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M20 20H7L3 16l10-10 7 7-1.5 1.5"/><path d="M6.5 17.5l5-5"/>
+                  </svg>
+                  橡皮擦
+                </button>
+                <button
+                  class="ft-mode-btn"
+                  :class="{ 'ft-mode-btn--active': brushMode === 'add' }"
+                  @click="brushMode = 'add'"
+                  title="画笔：在透明区域上涂抹来恢复"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                  </svg>
+                  画笔
+                </button>
+              </div>
+              <div class="ft-divider" />
+              <div class="ft-size">
+                <span class="ft-label">笔刷大小</span>
+                <input
+                  type="range" class="ft-slider"
+                  min="5" max="120" step="1"
+                  v-model.number="brushSize"
+                />
+                <span class="ft-val">{{ brushSize }}px</span>
+              </div>
+              <div class="ft-divider" />
+              <span class="ft-hint">
+                {{ brushMode === 'erase' ? '在保留区域涂抹以擦除' : '在透明区域涂抹以恢复' }}
+              </span>
+            </div>
+          </Transition>
+
           <div class="confirm-bar__inner">
-            <div class="confirm-bar__icon">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <div class="confirm-bar__icon" :class="{ 'confirm-bar__icon--finetune': isFinetuning }">
+              <svg v-if="!isFinetuning" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
                 <circle cx="12" cy="12" r="3"/>
               </svg>
+              <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
+              </svg>
             </div>
             <div class="confirm-bar__text">
-              <span class="confirm-bar__title">抠图预览</span>
-              <span class="confirm-bar__sub">确认效果后应用到图层，或重新操作</span>
+              <span class="confirm-bar__title">{{ isFinetuning ? '微调模式' : '抠图预览' }}</span>
+              <span class="confirm-bar__sub">{{ isFinetuning ? '用笔刷涂抹来精修抠图边缘，完成后确认应用' : '确认效果后应用到图层，或重新操作' }}</span>
             </div>
             <div class="confirm-bar__actions">
               <button class="cb-btn cb-btn--discard" @click="canvasStore.discardPendingMask()">
@@ -475,12 +668,28 @@ onUnmounted(() => {
                 </svg>
                 放弃
               </button>
-              <button class="cb-btn cb-btn--invert" @click="canvasStore.invertPendingMask()" title="反转蒙版选区">
+              <button
+                class="cb-btn cb-btn--invert"
+                @click="canvasStore.invertPendingMask()"
+                :disabled="isFinetuning"
+                title="反转蒙版选区（微调模式下不可用）"
+              >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <circle cx="12" cy="12" r="10"/>
                   <path d="M12 2a10 10 0 0 1 0 20V2z" fill="currentColor" stroke="none"/>
                 </svg>
                 反选
+              </button>
+              <button
+                class="cb-btn"
+                :class="isFinetuning ? 'cb-btn--finetune-active' : 'cb-btn--finetune'"
+                @click="isFinetuning ? exitFinetune() : enterFinetune()"
+                title="用笔刷手动精修抠图细节"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                </svg>
+                {{ isFinetuning ? '退出微调' : '微调' }}
               </button>
               <button class="cb-btn cb-btn--confirm" @click="canvasStore.confirmPendingMask()">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -858,8 +1067,16 @@ onUnmounted(() => {
   transform: translateX(-50%);
   z-index: var(--z-overlay);
   pointer-events: auto;
-  min-width: 420px;
-  max-width: 560px;
+  width: max-content;
+  min-width: 540px;
+  max-width: min(720px, calc(100vw - 48px));
+  background: var(--bg-panel);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg), 0 0 0 1px rgba(99, 102, 241, 0.15), var(--shadow-glow);
+  overflow: hidden;
 }
 
 .confirm-bar__inner {
@@ -867,12 +1084,6 @@ onUnmounted(() => {
   align-items: center;
   gap: var(--space-3);
   padding: 10px var(--space-4);
-  background: var(--bg-panel);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgba(99, 102, 241, 0.35);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg), 0 0 0 1px rgba(99, 102, 241, 0.15), var(--shadow-glow);
 }
 
 .confirm-bar__icon {
@@ -892,21 +1103,24 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 2px;
   flex: 1;
-  min-width: 0;
+  min-width: 100px;
 }
 .confirm-bar__title {
   font-size: var(--text-sm);
   font-weight: 600;
   color: var(--text-primary);
+  white-space: nowrap;
 }
 .confirm-bar__sub {
   font-size: var(--text-xs);
   color: var(--text-tertiary);
+  white-space: nowrap;
 }
 
 .confirm-bar__actions {
   display: flex;
   gap: var(--space-2);
+  flex-shrink: 0;
   flex-shrink: 0;
 }
 
@@ -952,6 +1166,29 @@ onUnmounted(() => {
   transform: translateY(-1px);
 }
 .cb-btn--confirm:active { transform: translateY(0); }
+.cb-btn--finetune {
+  background: var(--bg-button);
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+.cb-btn--finetune:hover {
+  background: rgba(99, 102, 241, 0.12);
+  color: var(--accent-hover);
+  border-color: rgba(99, 102, 241, 0.35);
+}
+.cb-btn--finetune-active {
+  background: rgba(99, 102, 241, 0.18);
+  color: var(--accent-hover);
+  border-color: rgba(99, 102, 241, 0.5);
+}
+.cb-btn--finetune-active:hover {
+  background: rgba(99, 102, 241, 0.25);
+}
+.cb-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
 
 /* ── Shared quick-button ─────────────────────────────────────────── */
 .qb-btn {
@@ -999,6 +1236,122 @@ onUnmounted(() => {
 .qb-btn--close:hover {
   color: var(--text-primary);
   background: var(--bg-button-hover);
+}
+
+/* ── Fine-tune row ───────────────────────────────────────────────────── */
+.finetune-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 8px var(--space-4);
+  border-bottom: 1px solid rgba(99, 102, 241, 0.2);
+  flex-wrap: wrap;
+}
+
+.ft-mode {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.ft-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--bg-button);
+  color: var(--text-secondary);
+  transition: all var(--transition-fast);
+}
+.ft-mode-btn:hover {
+  background: var(--bg-button-hover);
+  color: var(--text-primary);
+}
+.ft-mode-btn--active {
+  background: rgba(99, 102, 241, 0.18);
+  color: var(--accent-hover);
+  border-color: rgba(99, 102, 241, 0.5);
+}
+
+.ft-divider {
+  width: 1px;
+  height: 16px;
+  background: rgba(99, 102, 241, 0.2);
+  flex-shrink: 0;
+}
+
+.ft-size {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.ft-label {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.ft-slider {
+  width: 90px;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+.ft-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 2px solid var(--bg-panel);
+}
+
+.ft-val {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  min-width: 30px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ft-hint {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Brush cursor overlay ────────────────────────────────────────────── */
+.brush-cursor {
+  position: absolute;
+  border-radius: 50%;
+  border: 1.5px solid rgba(239, 68, 68, 0.85);
+  background: rgba(239, 68, 68, 0.08);
+  pointer-events: none;
+  z-index: calc(var(--z-overlay) + 1);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+.brush-cursor--add {
+  border-color: rgba(99, 102, 241, 0.9);
+  background: rgba(99, 102, 241, 0.1);
+}
+
+/* ── Confirm bar icon variant ────────────────────────────────────────── */
+.confirm-bar__icon--finetune {
+  background: rgba(99, 102, 241, 0.2);
 }
 
 /* ── Transition ──────────────────────────────────────────────────── */
