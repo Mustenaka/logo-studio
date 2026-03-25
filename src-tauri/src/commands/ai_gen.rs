@@ -238,11 +238,12 @@ async fn run_generate(
 
     let guidance_scale = guidance.unwrap_or(def.default_guidance) as f64;
 
-    let img_w = (width.unwrap_or(512) as usize)
+    // Default to 256×256 for fast CPU inference; GPU builds can go higher.
+    let img_w = (width.unwrap_or(256) as usize)
         .min(def.max_resolution as usize)
         .next_multiple_of(8)
         .max(8);
-    let img_h = (height.unwrap_or(512) as usize)
+    let img_h = (height.unwrap_or(256) as usize)
         .min(def.max_resolution as usize)
         .next_multiple_of(8)
         .max(8);

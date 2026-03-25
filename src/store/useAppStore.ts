@@ -1,12 +1,27 @@
 import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
+import { defaultLocale, i18n, localeOptions, type LocaleCode } from '../i18n'
 
 export type Theme = 'dark' | 'light'
-export type Locale = 'zh' | 'en'
+export type Locale = LocaleCode
+
+const localeSet = new Set(localeOptions.map((option) => option.code))
+
+function getStoredTheme(): Theme {
+  if (typeof window === 'undefined') return 'dark'
+  const saved = window.localStorage.getItem('ls-theme')
+  return saved === 'light' ? 'light' : 'dark'
+}
+
+function getStoredLocale(): Locale {
+  if (typeof window === 'undefined') return defaultLocale
+  const saved = window.localStorage.getItem('ls-locale')
+  return saved && localeSet.has(saved as Locale) ? (saved as Locale) : defaultLocale
+}
 
 export const useAppStore = defineStore('app', () => {
-  const theme = ref<Theme>('dark')
-  const locale = ref<Locale>('zh')
+  const theme = ref<Theme>(getStoredTheme())
+  const locale = ref<Locale>(getStoredLocale())
   const isLoading = ref(false)
   const loadingText = ref('')
   const toastMessage = ref('')
@@ -44,7 +59,16 @@ export const useAppStore = defineStore('app', () => {
 
   // Apply theme to <html>
   watch(theme, (t) => {
+    if (typeof document === 'undefined') return
     document.documentElement.setAttribute('data-theme', t)
+    window.localStorage.setItem('ls-theme', t)
+  }, { immediate: true })
+
+  watch(locale, (value) => {
+    i18n.global.locale.value = value
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('ls-locale', value)
+    }
   }, { immediate: true })
 
   return {

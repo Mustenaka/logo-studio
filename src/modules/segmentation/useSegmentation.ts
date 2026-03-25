@@ -2,8 +2,10 @@ import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useCanvasStore } from '../../store/useCanvasStore'
 import { useAppStore } from '../../store/useAppStore'
+import { i18n } from '../../i18n'
 
 export function useSegmentation() {
+  const tr = (key: string, params?: Record<string, unknown>) => params ? i18n.global.t(key, params) : i18n.global.t(key)
   const canvasStore = useCanvasStore()
   const appStore = useAppStore()
   const isRunning = ref(false)
@@ -16,7 +18,7 @@ export function useSegmentation() {
     if (!canvasStore.imageLayer || isRunning.value) return
 
     isRunning.value = true
-    appStore.setLoading(true, mode === 'auto' ? 'AI 智能抠图中，首次运行需要 1-2 分钟...' : 'AI 点选抠图中，首次运行需要 1-2 分钟...')
+    appStore.setLoading(true, mode === 'auto' ? tr('segmentationModule.loading.auto') : tr('segmentationModule.loading.point'))
 
     try {
       const imageSrc = canvasStore.imageLayer.src
@@ -37,7 +39,7 @@ export function useSegmentation() {
         canvasStore.setPendingMask(`data:image/png;base64,${result.mask}`)
         canvasStore.lastSegMethod = result.method ?? ''
         if (result.method?.startsWith('flood_fill') || result.method?.startsWith('color')) {
-          appStore.showToast(`SAM2 未就绪，已使用降级方案: ${result.method}`, 'warn')
+          appStore.showToast(tr('segmentationModule.fallbackWarning', { method: result.method }), 'warn')
         }
       } else {
         console.error('Segmentation failed:', result.error)

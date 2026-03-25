@@ -1,22 +1,21 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { save, open } from '@tauri-apps/plugin-dialog'
 import { useCanvasStore } from '../../store/useCanvasStore'
 import { useBackgroundStore } from '../../store/useBackgroundStore'
 import { useTypographyStore } from '../../store/useTypographyStore'
 import { useAppStore } from '../../store/useAppStore'
+import { i18n } from '../../i18n'
 import { useCanvasRenderer } from '../image-editor/useImageEditor'
-
-// ── Icon set presets ──────────────────────────────────────────────────────────
 
 interface IconEntry { size: number; relpath: string }
 
 const WEB_ICONS: IconEntry[] = [
-  { size: 16,  relpath: 'favicon-16x16.png' },
-  { size: 32,  relpath: 'favicon-32x32.png' },
-  { size: 48,  relpath: 'favicon-48x48.png' },
-  { size: 64,  relpath: 'icon-64x64.png' },
-  { size: 96,  relpath: 'icon-96x96.png' },
+  { size: 16, relpath: 'favicon-16x16.png' },
+  { size: 32, relpath: 'favicon-32x32.png' },
+  { size: 48, relpath: 'favicon-48x48.png' },
+  { size: 64, relpath: 'icon-64x64.png' },
+  { size: 96, relpath: 'icon-96x96.png' },
   { size: 128, relpath: 'icon-128x128.png' },
   { size: 192, relpath: 'icon-192x192.png' },
   { size: 256, relpath: 'icon-256x256.png' },
@@ -25,59 +24,88 @@ const WEB_ICONS: IconEntry[] = [
 ]
 
 const IOS_ICONS: IconEntry[] = [
-  { size: 20,   relpath: 'ios/AppIcon-20@1x.png' },
-  { size: 40,   relpath: 'ios/AppIcon-20@2x.png' },
-  { size: 60,   relpath: 'ios/AppIcon-20@3x.png' },
-  { size: 29,   relpath: 'ios/AppIcon-29@1x.png' },
-  { size: 58,   relpath: 'ios/AppIcon-29@2x.png' },
-  { size: 87,   relpath: 'ios/AppIcon-29@3x.png' },
-  { size: 40,   relpath: 'ios/AppIcon-40@1x.png' },
-  { size: 80,   relpath: 'ios/AppIcon-40@2x.png' },
-  { size: 120,  relpath: 'ios/AppIcon-40@3x.png' },
-  { size: 60,   relpath: 'ios/AppIcon-60@1x.png' },
-  { size: 120,  relpath: 'ios/AppIcon-60@2x.png' },
-  { size: 180,  relpath: 'ios/AppIcon-60@3x.png' },
-  { size: 76,   relpath: 'ios/AppIcon-76@1x.png' },
-  { size: 152,  relpath: 'ios/AppIcon-76@2x.png' },
-  { size: 167,  relpath: 'ios/AppIcon-83.5@2x.png' },
+  { size: 20, relpath: 'ios/AppIcon-20@1x.png' },
+  { size: 40, relpath: 'ios/AppIcon-20@2x.png' },
+  { size: 60, relpath: 'ios/AppIcon-20@3x.png' },
+  { size: 29, relpath: 'ios/AppIcon-29@1x.png' },
+  { size: 58, relpath: 'ios/AppIcon-29@2x.png' },
+  { size: 87, relpath: 'ios/AppIcon-29@3x.png' },
+  { size: 40, relpath: 'ios/AppIcon-40@1x.png' },
+  { size: 80, relpath: 'ios/AppIcon-40@2x.png' },
+  { size: 120, relpath: 'ios/AppIcon-40@3x.png' },
+  { size: 60, relpath: 'ios/AppIcon-60@1x.png' },
+  { size: 120, relpath: 'ios/AppIcon-60@2x.png' },
+  { size: 180, relpath: 'ios/AppIcon-60@3x.png' },
+  { size: 76, relpath: 'ios/AppIcon-76@1x.png' },
+  { size: 152, relpath: 'ios/AppIcon-76@2x.png' },
+  { size: 167, relpath: 'ios/AppIcon-83.5@2x.png' },
   { size: 1024, relpath: 'ios/AppIcon-1024x1024.png' },
 ]
 
 const ANDROID_ICONS: IconEntry[] = [
-  { size: 36,  relpath: 'android/mipmap-ldpi/ic_launcher.png' },
-  { size: 48,  relpath: 'android/mipmap-mdpi/ic_launcher.png' },
-  { size: 72,  relpath: 'android/mipmap-hdpi/ic_launcher.png' },
-  { size: 96,  relpath: 'android/mipmap-xhdpi/ic_launcher.png' },
+  { size: 36, relpath: 'android/mipmap-ldpi/ic_launcher.png' },
+  { size: 48, relpath: 'android/mipmap-mdpi/ic_launcher.png' },
+  { size: 72, relpath: 'android/mipmap-hdpi/ic_launcher.png' },
+  { size: 96, relpath: 'android/mipmap-xhdpi/ic_launcher.png' },
   { size: 144, relpath: 'android/mipmap-xxhdpi/ic_launcher.png' },
   { size: 192, relpath: 'android/mipmap-xxxhdpi/ic_launcher.png' },
   { size: 512, relpath: 'android/ic_launcher-playstore.png' },
 ]
 
 const MACOS_ICONS: IconEntry[] = [
-  { size: 16,   relpath: 'macos/icon_16x16.png' },
-  { size: 32,   relpath: 'macos/icon_16x16@2x.png' },
-  { size: 32,   relpath: 'macos/icon_32x32.png' },
-  { size: 64,   relpath: 'macos/icon_32x32@2x.png' },
-  { size: 128,  relpath: 'macos/icon_128x128.png' },
-  { size: 256,  relpath: 'macos/icon_128x128@2x.png' },
-  { size: 256,  relpath: 'macos/icon_256x256.png' },
-  { size: 512,  relpath: 'macos/icon_256x256@2x.png' },
-  { size: 512,  relpath: 'macos/icon_512x512.png' },
+  { size: 16, relpath: 'macos/icon_16x16.png' },
+  { size: 32, relpath: 'macos/icon_16x16@2x.png' },
+  { size: 32, relpath: 'macos/icon_32x32.png' },
+  { size: 64, relpath: 'macos/icon_32x32@2x.png' },
+  { size: 128, relpath: 'macos/icon_128x128.png' },
+  { size: 256, relpath: 'macos/icon_128x128@2x.png' },
+  { size: 256, relpath: 'macos/icon_256x256.png' },
+  { size: 512, relpath: 'macos/icon_256x256@2x.png' },
+  { size: 512, relpath: 'macos/icon_512x512.png' },
   { size: 1024, relpath: 'macos/icon_512x512@2x.png' },
 ]
 
-export const ICON_PRESETS = {
-  web:     { label: 'Web 图标',    desc: '10 种尺寸 (16–512px)',            entries: WEB_ICONS },
-  ios:     { label: 'iOS',         desc: '16 种规格 (iPhone + iPad)',        entries: IOS_ICONS },
-  android: { label: 'Android',     desc: '7 种规格 (LDPI–XXXHDPI)',          entries: ANDROID_ICONS },
-  macos:   { label: 'macOS',       desc: '10 种规格 (含 @2x)',               entries: MACOS_ICONS },
-  full:    { label: '完整套装',     desc: '全平台，共 43 种规格',
-             entries: [...WEB_ICONS, ...IOS_ICONS, ...ANDROID_ICONS, ...MACOS_ICONS] },
+const ICON_PRESET_ENTRIES = {
+  web: WEB_ICONS,
+  ios: IOS_ICONS,
+  android: ANDROID_ICONS,
+  macos: MACOS_ICONS,
+  full: [...WEB_ICONS, ...IOS_ICONS, ...ANDROID_ICONS, ...MACOS_ICONS],
 } as const
 
-export type IconPresetId = keyof typeof ICON_PRESETS
+export type IconPresetId = keyof typeof ICON_PRESET_ENTRIES
 
-// ── Composable ────────────────────────────────────────────────────────────────
+type TranslateFn = (key: string, params?: Record<string, unknown>) => string
+
+export function getIconPresetOptions(t: TranslateFn) {
+  return {
+    web: {
+      label: t('rightPanel.export.presets.web.label'),
+      desc: t('rightPanel.export.presets.web.desc'),
+      entries: WEB_ICONS,
+    },
+    ios: {
+      label: t('rightPanel.export.presets.ios.label'),
+      desc: t('rightPanel.export.presets.ios.desc'),
+      entries: IOS_ICONS,
+    },
+    android: {
+      label: t('rightPanel.export.presets.android.label'),
+      desc: t('rightPanel.export.presets.android.desc'),
+      entries: ANDROID_ICONS,
+    },
+    macos: {
+      label: t('rightPanel.export.presets.macos.label'),
+      desc: t('rightPanel.export.presets.macos.desc'),
+      entries: MACOS_ICONS,
+    },
+    full: {
+      label: t('rightPanel.export.presets.full.label'),
+      desc: t('rightPanel.export.presets.full.desc'),
+      entries: ICON_PRESET_ENTRIES.full,
+    },
+  } as const
+}
 
 export function useExport() {
   const canvasStore = useCanvasStore()
@@ -87,8 +115,12 @@ export function useExport() {
   const { render } = useCanvasRenderer()
   const isExporting = ref(false)
   const lastExportMsg = ref('')
+  const isExportError = ref(false)
 
-  /** Render canvas at a target size and return base64 PNG data URL */
+  function tr(key: string, params?: Record<string, unknown>) {
+    return params ? i18n.global.t(key, params) : i18n.global.t(key)
+  }
+
   async function renderAtSize(targetSize: number): Promise<string> {
     const exportCanvas = document.createElement('canvas')
     exportCanvas.width = targetSize
@@ -98,83 +130,117 @@ export function useExport() {
     const scaledCanvas = createScaledCanvasStore(canvasStore, scale)
     const scaledTypo = createScaledTypoStore(typoStore, scale)
 
-    render(exportCanvas, scaledCanvas as any, bgStore, scaledTypo as any)
-    await new Promise(r => setTimeout(r, 400))
-    render(exportCanvas, scaledCanvas as any, bgStore, scaledTypo as any)
-    await new Promise(r => setTimeout(r, 100))
+    render(exportCanvas, scaledCanvas as never, bgStore, scaledTypo as never)
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    render(exportCanvas, scaledCanvas as never, bgStore, scaledTypo as never)
+    await new Promise((resolve) => setTimeout(resolve, 100))
 
     return exportCanvas.toDataURL('image/png', 1)
   }
 
-  /** Export a single PNG — opens native save dialog */
-  async function exportPng(targetSize: number = 1024) {
+  async function exportOriginalSize() {
     if (isExporting.value) return
+    const layer = canvasStore.imageLayer
+    if (!layer) return
+    const targetSize = Math.max(layer.naturalWidth, layer.naturalHeight)
     isExporting.value = true
-    appStore.setLoading(true, `导出 ${targetSize}px PNG…`)
+    isExportError.value = false
+    appStore.setLoading(true, tr('exportModule.loading.exportOriginal', { size: targetSize }))
 
     try {
-      // Open native save dialog
       const savePath = await save({
-        title: '保存 PNG',
-        defaultPath: `logo-${targetSize}px.png`,
-        filters: [{ name: 'PNG 图像', extensions: ['png'] }],
+        title: tr('exportModule.dialog.savePngTitle'),
+        defaultPath: `logo-original-${targetSize}px.png`,
+        filters: [{ name: tr('exportModule.dialog.pngFilterName'), extensions: ['png'] }],
       })
-      if (!savePath) return  // user cancelled
+      if (!savePath) return
 
       const dataUrl = await renderAtSize(targetSize)
       await invoke('save_image', { dataUrl, path: savePath })
-      lastExportMsg.value = `已保存：${savePath}`
-    } catch (e) {
-      console.error('Export error:', e)
-      lastExportMsg.value = `导出失败：${e}`
+      lastExportMsg.value = tr('exportModule.status.saved', { path: savePath })
+    } catch (error) {
+      console.error('Export error:', error)
+      isExportError.value = true
+      lastExportMsg.value = tr('exportModule.status.failed', { error: String(error) })
     } finally {
       isExporting.value = false
       appStore.setLoading(false)
     }
   }
 
-  /** Generate an icon set — renders at 1024px, then resizes via Rust */
+  async function exportPng(targetSize = 1024) {
+    if (isExporting.value) return
+    isExporting.value = true
+    isExportError.value = false
+    appStore.setLoading(true, tr('exportModule.loading.exportPng', { size: targetSize }))
+
+    try {
+      const savePath = await save({
+        title: tr('exportModule.dialog.savePngTitle'),
+        defaultPath: `logo-${targetSize}px.png`,
+        filters: [{ name: tr('exportModule.dialog.pngFilterName'), extensions: ['png'] }],
+      })
+      if (!savePath) return
+
+      const dataUrl = await renderAtSize(targetSize)
+      await invoke('save_image', { dataUrl, path: savePath })
+      lastExportMsg.value = tr('exportModule.status.saved', { path: savePath })
+    } catch (error) {
+      console.error('Export error:', error)
+      isExportError.value = true
+      lastExportMsg.value = tr('exportModule.status.failed', { error: String(error) })
+    } finally {
+      isExporting.value = false
+      appStore.setLoading(false)
+    }
+  }
+
   async function exportIconSet(presetId: IconPresetId) {
     if (isExporting.value) return
     isExporting.value = true
+    isExportError.value = false
 
-    const preset = ICON_PRESETS[presetId]
-    appStore.setLoading(true, `生成 ${preset.label} 图标集…`)
+    const preset = getIconPresetOptions(i18n.global.t)[presetId]
+    appStore.setLoading(true, tr('exportModule.loading.generateSet', { label: preset.label }))
 
     try {
-      // Open folder picker
       const dir = await open({
-        title: `选择 ${preset.label} 输出文件夹`,
+        title: tr('exportModule.dialog.chooseFolder', { label: preset.label }),
         directory: true,
         multiple: false,
       })
-      if (!dir || typeof dir !== 'string') return  // user cancelled
+      if (!dir || typeof dir !== 'string') return
 
-      // Render at 1024px (source for all resizes)
-      appStore.setLoading(true, '渲染高清图…')
+      appStore.setLoading(true, tr('exportModule.loading.rendering'))
       const dataUrl = await renderAtSize(1024)
 
-      appStore.setLoading(true, `生成 ${preset.entries.length} 个图标文件…`)
+      appStore.setLoading(true, tr('exportModule.loading.generateFiles', { count: preset.entries.length }))
       const count = await invoke<number>('export_icon_set', {
         dataUrl,
         outputDir: dir,
         entries: preset.entries,
       })
 
-      lastExportMsg.value = `✓ 已生成 ${count} 个图标文件至：${dir}`
-    } catch (e) {
-      console.error('Icon set export error:', e)
-      lastExportMsg.value = `导出失败：${e}`
+      lastExportMsg.value = tr('exportModule.status.generated', { count, dir })
+    } catch (error) {
+      console.error('Icon set export error:', error)
+      isExportError.value = true
+      lastExportMsg.value = tr('exportModule.status.failed', { error: String(error) })
     } finally {
       isExporting.value = false
       appStore.setLoading(false)
     }
   }
 
-  return { exportPng, exportIconSet, isExporting, lastExportMsg }
+  return {
+    exportPng,
+    exportOriginalSize,
+    exportIconSet,
+    isExporting,
+    lastExportMsg,
+    isExportError: computed(() => isExportError.value),
+  }
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function createScaledCanvasStore(
   store: ReturnType<typeof useCanvasStore>,
@@ -206,12 +272,12 @@ function createScaledTypoStore(
 ) {
   return {
     ...store,
-    textLayers: store.textLayers.map(l => ({
-      ...l,
-      x: l.x * scale,
-      y: l.y * scale,
-      fontSize: l.fontSize * scale,
-      letterSpacing: l.letterSpacing * scale,
+    textLayers: store.textLayers.map((layer) => ({
+      ...layer,
+      x: layer.x * scale,
+      y: layer.y * scale,
+      fontSize: layer.fontSize * scale,
+      letterSpacing: layer.letterSpacing * scale,
     })),
   }
 }

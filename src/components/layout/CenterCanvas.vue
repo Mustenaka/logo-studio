@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useCanvasStore } from '../../store/useCanvasStore'
 import { useBackgroundStore } from '../../store/useBackgroundStore'
 import { useTypographyStore } from '../../store/useTypographyStore'
@@ -10,6 +11,7 @@ const canvasStore = useCanvasStore()
 const bgStore = useBackgroundStore()
 const typoStore = useTypographyStore()
 const { runSegmentation, isRunning: isSegRunning } = useSegmentation()
+const { t } = useI18n()
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 const wrapperRef = ref<HTMLDivElement | null>(null)
@@ -327,15 +329,15 @@ onUnmounted(() => {
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
             </svg>
-            重置视图
+            {{ t('centerCanvas.toolbar.resetView') }}
           </button>
-          <button class="btn-ghost toolbar-btn icon-only" title="放大" @click="canvasStore.setZoom(canvasStore.zoom * 1.2)">
+          <button class="btn-ghost toolbar-btn icon-only" :title="t('centerCanvas.toolbar.zoomIn')" @click="canvasStore.setZoom(canvasStore.zoom * 1.2)">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
               <line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>
             </svg>
           </button>
-          <button class="btn-ghost toolbar-btn icon-only" title="缩小" @click="canvasStore.setZoom(canvasStore.zoom * 0.8)">
+          <button class="btn-ghost toolbar-btn icon-only" :title="t('centerCanvas.toolbar.zoomOut')" @click="canvasStore.setZoom(canvasStore.zoom * 0.8)">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
               <line x1="8" y1="11" x2="14" y2="11"/>
@@ -348,32 +350,32 @@ onUnmounted(() => {
         <template v-if="canvasStore.hasImage">
           <div class="toolbar-divider" />
           <div class="toolbar-group">
-            <span class="toolbar-section-label">图像</span>
+            <span class="toolbar-section-label">{{ t('centerCanvas.toolbar.image') }}</span>
             <!-- Scale controls -->
-            <button class="btn-ghost toolbar-btn icon-only" title="缩小图像 10%" @click="adjustImageScale(-10)">
+            <button class="btn-ghost toolbar-btn icon-only" :title="t('centerCanvas.toolbar.scaleDownImage')" @click="adjustImageScale(-10)">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                 <line x1="5" y1="12" x2="19" y2="12"/>
               </svg>
             </button>
-            <span class="scale-display" title="当前图像缩放比例">{{ imageScalePct }}%</span>
-            <button class="btn-ghost toolbar-btn icon-only" title="放大图像 10%" @click="adjustImageScale(10)">
+            <span class="scale-display" :title="t('centerCanvas.toolbar.currentImageScale')">{{ imageScalePct }}%</span>
+            <button class="btn-ghost toolbar-btn icon-only" :title="t('centerCanvas.toolbar.scaleUpImage')" @click="adjustImageScale(10)">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                 <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
               </svg>
             </button>
-            <button class="btn-ghost toolbar-btn" title="将图像居中" @click="resetImagePosition()">
+            <button class="btn-ghost toolbar-btn" :title="t('centerCanvas.toolbar.centerImage')" @click="resetImagePosition()">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="3" y="3" width="18" height="18" rx="2"/>
                 <line x1="12" y1="3" x2="12" y2="21"/><line x1="3" y1="12" x2="21" y2="12"/>
               </svg>
-              居中
+              {{ t('centerCanvas.toolbar.center') }}
             </button>
             <!-- Adjustments toggle -->
             <button
               class="btn-ghost toolbar-btn"
               :class="{ 'toolbar-btn--active': showAdjust }"
               @click="showAdjust = !showAdjust"
-              title="图像色调调整"
+              :title="t('centerCanvas.toolbar.imageAdjustments')"
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/>
@@ -382,7 +384,7 @@ onUnmounted(() => {
                 <line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/>
                 <line x1="17" y1="16" x2="23" y2="16"/>
               </svg>
-              调整
+              {{ t('centerCanvas.toolbar.adjustments') }}
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
                 :style="{ transform: showAdjust ? 'rotate(180deg)' : '', transition: 'transform 0.2s' }">
                 <polyline points="6 9 12 15 18 9"/>
@@ -397,13 +399,13 @@ onUnmounted(() => {
               :class="{ 'toolbar-btn--active': showQuickBar }"
               :disabled="canvasStore.hasPendingMask"
               @click="showQuickBar = !showQuickBar"
-              title="智能抠图工具栏"
+              :title="t('centerCanvas.toolbar.segmentationTools')"
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 2L2 7l10 5 10-5-10-5z"/>
                 <path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
               </svg>
-              抠图
+              {{ t('centerCanvas.toolbar.cutout') }}
             </button>
           </div>
         </template>
@@ -413,25 +415,25 @@ onUnmounted(() => {
       <Transition name="expand">
         <div v-if="showAdjust && canvasStore.imageLayer" class="adjust-row">
           <div class="adjust-item">
-            <label class="adjust-label">亮度</label>
+            <label class="adjust-label">{{ t('centerCanvas.adjustments.brightness') }}</label>
             <input type="range" class="adjust-slider" min="-100" max="100"
               v-model.number="canvasStore.imageLayer.brightness" />
             <span class="adjust-val">{{ canvasStore.imageLayer.brightness }}</span>
           </div>
           <div class="adjust-item">
-            <label class="adjust-label">对比度</label>
+            <label class="adjust-label">{{ t('centerCanvas.adjustments.contrast') }}</label>
             <input type="range" class="adjust-slider" min="-100" max="100"
               v-model.number="canvasStore.imageLayer.contrast" />
             <span class="adjust-val">{{ canvasStore.imageLayer.contrast }}</span>
           </div>
           <div class="adjust-item">
-            <label class="adjust-label">饱和度</label>
+            <label class="adjust-label">{{ t('centerCanvas.adjustments.saturation') }}</label>
             <input type="range" class="adjust-slider" min="-100" max="100"
               v-model.number="canvasStore.imageLayer.saturation" />
             <span class="adjust-val">{{ canvasStore.imageLayer.saturation }}</span>
           </div>
           <div class="adjust-item">
-            <label class="adjust-label">不透明</label>
+            <label class="adjust-label">{{ t('centerCanvas.adjustments.opacity') }}</label>
             <input type="range" class="adjust-slider" min="0" max="100"
               :value="Math.round(canvasStore.imageLayer.opacity * 100)"
               @input="(e) => canvasStore.imageLayer && (canvasStore.imageLayer.opacity = Number((e.target as HTMLInputElement).value) / 100)" />
@@ -481,7 +483,7 @@ onUnmounted(() => {
           <circle cx="8.5" cy="8.5" r="1.5"/>
           <polyline points="21 15 16 10 5 21"/>
         </svg>
-        <p>从左侧导入图片开始设计</p>
+        <p>{{ t('centerCanvas.empty.title') }}</p>
       </div>
 
       <!-- ── Floating quick-action bar ── -->
@@ -491,11 +493,11 @@ onUnmounted(() => {
           class="quick-bar"
         >
           <div class="quick-bar__inner">
-            <span class="quick-bar__label">智能抠图</span>
+            <span class="quick-bar__label">{{ t('centerCanvas.quickBar.title') }}</span>
             <div class="quick-bar__divider" />
             <!-- Inline tolerance slider -->
-            <div class="qb-tolerance" title="影响强度：值越高移除越多背景">
-              <span class="qb-tolerance__label">强度</span>
+            <div class="qb-tolerance" :title="t('centerCanvas.quickBar.strengthHint')">
+              <span class="qb-tolerance__label">{{ t('centerCanvas.quickBar.strength') }}</span>
               <input
                 type="range"
                 class="qb-tolerance__track"
@@ -508,8 +510,8 @@ onUnmounted(() => {
             <div class="quick-bar__divider" />
             <!-- SAM2 debug params -->
             <div class="qb-debug">
-              <span class="qb-debug__label" title="SAM2 蒙版阈值：越低保留越多细节（阴影/渐变），越高越干净锐利">
-                阈值 {{ canvasStore.sam2Threshold.toFixed(2) }}
+              <span class="qb-debug__label" :title="t('centerCanvas.quickBar.thresholdHint')">
+                {{ t('centerCanvas.quickBar.threshold', { value: canvasStore.sam2Threshold.toFixed(2) }) }}
               </span>
               <input
                 type="range" class="qb-tolerance__track"
@@ -517,8 +519,8 @@ onUnmounted(() => {
                 :value="canvasStore.sam2Threshold"
                 @input="canvasStore.sam2Threshold = parseFloat(($event.target as HTMLInputElement).value)"
               />
-              <span class="qb-debug__label qb-debug__gap" title="Alpha Matting 边缘精修范围（像素）">
-                边缘 {{ canvasStore.matteRadius }}px
+              <span class="qb-debug__label qb-debug__gap" :title="t('centerCanvas.quickBar.edgeHint')">
+                {{ t('centerCanvas.quickBar.edge', { value: canvasStore.matteRadius }) }}
               </span>
               <input
                 type="range" class="qb-tolerance__track"
@@ -539,7 +541,7 @@ onUnmounted(() => {
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
               </svg>
-              {{ isSegRunning ? '处理中…' : '一键抠图' }}
+              {{ isSegRunning ? t('app.loading.processing') : t('centerCanvas.quickBar.auto') }}
             </button>
             <button
               class="qb-btn"
@@ -548,7 +550,7 @@ onUnmounted(() => {
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/>
               </svg>
-              点选模式
+              {{ t('centerCanvas.quickBar.point') }}
             </button>
             <template v-if="canvasStore.imageLayer?.hasMask">
               <div class="quick-bar__divider" />
@@ -556,12 +558,12 @@ onUnmounted(() => {
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                 </svg>
-                清除蒙版
+                {{ t('centerCanvas.quickBar.clearMask') }}
               </button>
             </template>
             <!-- Close button -->
             <div class="quick-bar__divider" />
-            <button class="qb-btn qb-btn--close" @click="showQuickBar = false" title="关闭抠图栏">
+            <button class="qb-btn qb-btn--close" @click="showQuickBar = false" :title="t('centerCanvas.quickBar.close')">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                 <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
               </svg>
@@ -578,12 +580,12 @@ onUnmounted(() => {
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/>
               </svg>
-              <span>点击图像选取主体 &nbsp;·&nbsp; <kbd>Shift</kbd>+点击 排除区域</span>
-              <span class="point-count">已标记 <b>{{ canvasStore.segPoints.length }}</b> 点</span>
+              <span>{{ t('centerCanvas.pointBar.hint') }}</span>
+              <span class="point-count">{{ t('centerCanvas.pointBar.count', { count: canvasStore.segPoints.length }) }}</span>
             </div>
             <div class="point-bar__actions">
               <button class="qb-btn" @click="canvasStore.segMode = 'none'; canvasStore.clearSegPoints()">
-                取消
+                {{ t('common.cancel') }}
               </button>
               <button
                 class="qb-btn qb-btn--primary"
@@ -593,7 +595,7 @@ onUnmounted(() => {
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
                 </svg>
-                {{ isSegRunning ? '处理中…' : `运行抠图 (${canvasStore.segPoints.length})` }}
+                {{ isSegRunning ? t('app.loading.processing') : t('centerCanvas.pointBar.run', { count: canvasStore.segPoints.length }) }}
               </button>
             </div>
           </div>
@@ -611,28 +613,28 @@ onUnmounted(() => {
                   class="ft-mode-btn"
                   :class="{ 'ft-mode-btn--active': brushMode === 'erase' }"
                   @click="brushMode = 'erase'"
-                  title="擦除：在保留区域上涂抹来移除"
+                  :title="t('centerCanvas.finetune.eraseHint')"
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M20 20H7L3 16l10-10 7 7-1.5 1.5"/><path d="M6.5 17.5l5-5"/>
                   </svg>
-                  橡皮擦
+                  {{ t('centerCanvas.finetune.erase') }}
                 </button>
                 <button
                   class="ft-mode-btn"
                   :class="{ 'ft-mode-btn--active': brushMode === 'add' }"
                   @click="brushMode = 'add'"
-                  title="画笔：在透明区域上涂抹来恢复"
+                  :title="t('centerCanvas.finetune.brushHint')"
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
                   </svg>
-                  画笔
+                  {{ t('centerCanvas.finetune.brush') }}
                 </button>
               </div>
               <div class="ft-divider" />
               <div class="ft-size">
-                <span class="ft-label">笔刷大小</span>
+                <span class="ft-label">{{ t('centerCanvas.finetune.brushSize') }}</span>
                 <input
                   type="range" class="ft-slider"
                   min="5" max="120" step="1"
@@ -642,7 +644,7 @@ onUnmounted(() => {
               </div>
               <div class="ft-divider" />
               <span class="ft-hint">
-                {{ brushMode === 'erase' ? '在保留区域涂抹以擦除' : '在透明区域涂抹以恢复' }}
+                {{ brushMode === 'erase' ? t('centerCanvas.finetune.eraseGuide') : t('centerCanvas.finetune.brushGuide') }}
               </span>
             </div>
           </Transition>
@@ -658,44 +660,44 @@ onUnmounted(() => {
               </svg>
             </div>
             <div class="confirm-bar__text">
-              <span class="confirm-bar__title">{{ isFinetuning ? '微调模式' : '抠图预览' }}</span>
-              <span class="confirm-bar__sub">{{ isFinetuning ? '用笔刷涂抹来精修抠图边缘，完成后确认应用' : '确认效果后应用到图层，或重新操作' }}</span>
+              <span class="confirm-bar__title">{{ isFinetuning ? t('centerCanvas.confirmBar.finetuneTitle') : t('centerCanvas.confirmBar.previewTitle') }}</span>
+              <span class="confirm-bar__sub">{{ isFinetuning ? t('centerCanvas.confirmBar.finetuneSubtitle') : t('centerCanvas.confirmBar.previewSubtitle') }}</span>
             </div>
             <div class="confirm-bar__actions">
               <button class="cb-btn cb-btn--discard" @click="canvasStore.discardPendingMask()">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                 </svg>
-                放弃
+                {{ t('centerCanvas.confirmBar.discard') }}
               </button>
               <button
                 class="cb-btn cb-btn--invert"
                 @click="canvasStore.invertPendingMask()"
                 :disabled="isFinetuning"
-                title="反转蒙版选区（微调模式下不可用）"
+                :title="t('centerCanvas.confirmBar.invertHint')"
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <circle cx="12" cy="12" r="10"/>
                   <path d="M12 2a10 10 0 0 1 0 20V2z" fill="currentColor" stroke="none"/>
                 </svg>
-                反选
+                {{ t('centerCanvas.confirmBar.invert') }}
               </button>
               <button
                 class="cb-btn"
                 :class="isFinetuning ? 'cb-btn--finetune-active' : 'cb-btn--finetune'"
                 @click="isFinetuning ? exitFinetune() : enterFinetune()"
-                title="用笔刷手动精修抠图细节"
+                :title="t('centerCanvas.confirmBar.finetuneHint')"
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/>
                 </svg>
-                {{ isFinetuning ? '退出微调' : '微调' }}
+                {{ isFinetuning ? t('centerCanvas.confirmBar.exitFinetune') : t('centerCanvas.confirmBar.finetune') }}
               </button>
               <button class="cb-btn cb-btn--confirm" @click="canvasStore.confirmPendingMask()">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polyline points="20 6 9 17 4 12"/>
                 </svg>
-                确认应用
+                {{ t('centerCanvas.confirmBar.apply') }}
               </button>
             </div>
           </div>

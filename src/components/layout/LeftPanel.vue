@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useDropZone } from '@vueuse/core'
+import { useI18n } from 'vue-i18n'
 import GlassCard from '../ui/GlassCard.vue'
 import AiGenPanel from '../ai-gen/AiGenPanel.vue'
 import { useCanvasStore } from '../../store/useCanvasStore'
@@ -12,10 +13,13 @@ const canvasStore = useCanvasStore()
 const typoStore = useTypographyStore()
 const { importImageFromFile } = useImageEditor()
 const { imageThumbnail, textThumbnails } = useThumbnail()
+const { t } = useI18n()
 
 const dropZoneRef = ref<HTMLDivElement | null>(null)
 const isDragOver = ref(false)
 const activeTab = ref<'import' | 'layers' | 'ai'>('import')
+
+const totalLayerCount = computed(() => (canvasStore.hasImage ? 1 : 0) + typoStore.textLayers.length)
 
 const { isOverDropZone } = useDropZone(dropZoneRef, {
   onOver: () => { isDragOver.value = true },
@@ -35,31 +39,31 @@ async function openFilePicker() {
   if (canvasStore.hasImage) activeTab.value = 'layers'
 }
 
-function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
+function getLayerStatusLabel(layer: import('../../store/useCanvasStore').ImageLayer | null): string {
   if (!layer) return ''
-  if (canvasStore.hasPendingMask) return '预览中'
-  if (layer.hasMask) return '已抠图'
-  return '原图'
+  if (canvasStore.hasPendingMask) return t('leftPanel.layerStatus.preview')
+  if (layer.hasMask) return t('leftPanel.layerStatus.masked')
+  return t('leftPanel.layerStatus.original')
 }
 </script>
 
 <template>
   <aside class="left-panel panel-scroll">
-    <!-- Header tabs -->
     <div class="panel-tabs">
-      <button class="panel-tab" :class="{ active: activeTab === 'import' }" @click="activeTab = 'import'">导入</button>
+      <button class="panel-tab" :class="{ active: activeTab === 'import' }" @click="activeTab = 'import'">
+        {{ t('leftPanel.tabs.import') }}
+      </button>
       <button class="panel-tab" :class="{ active: activeTab === 'layers' }" @click="activeTab = 'layers'">
-        图层
-        <span v-if="canvasStore.hasImage || typoStore.textLayers.length > 0" class="tab-count">
-          {{ (canvasStore.hasImage ? 1 : 0) + typoStore.textLayers.length }}
+        {{ t('leftPanel.tabs.layers') }}
+        <span v-if="totalLayerCount > 0" class="tab-count">
+          {{ totalLayerCount }}
         </span>
       </button>
       <button class="panel-tab panel-tab--ai" :class="{ active: activeTab === 'ai' }" @click="activeTab = 'ai'">
-        AI 生成
+        {{ t('leftPanel.tabs.ai') }}
       </button>
     </div>
 
-    <!-- ── Import Tab ─────────────────────────────────────────────── -->
     <div v-if="activeTab === 'import'" class="tab-content">
       <div
         ref="dropZoneRef"
@@ -74,19 +78,18 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
             <line x1="12" y1="3" x2="12" y2="15"/>
           </svg>
         </div>
-        <p class="drop-zone__text">拖拽图片到此处</p>
-        <p class="drop-zone__sub">或点击选择文件</p>
-        <p class="drop-zone__formats">PNG · JPG · WebP · SVG</p>
+        <p class="drop-zone__text">{{ t('leftPanel.dropZone.title') }}</p>
+        <p class="drop-zone__sub">{{ t('leftPanel.dropZone.subtitle') }}</p>
+        <p class="drop-zone__formats">{{ t('leftPanel.dropZone.formats') }}</p>
       </div>
 
-      <!-- Current image quick-info -->
       <div v-if="canvasStore.hasImage && canvasStore.imageLayer" class="image-preview">
         <div class="image-preview__thumb-wrap">
           <img
             v-if="imageThumbnail"
             :src="imageThumbnail"
             class="image-preview__thumb"
-            alt="preview"
+            :alt="t('leftPanel.imagePreview.alt')"
           />
           <div v-else class="image-preview__thumb-placeholder" />
         </div>
@@ -94,7 +97,7 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
           <span class="image-preview__name">{{ canvasStore.imageLayer.name }}</span>
           <span class="image-preview__size">{{ canvasStore.imageLayer.width }} × {{ canvasStore.imageLayer.height }}</span>
         </div>
-        <button class="image-preview__remove" @click="canvasStore.clearImage()" title="移除">
+        <button class="image-preview__remove" @click="canvasStore.clearImage()" :title="t('common.remove')">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
           </svg>
@@ -102,26 +105,21 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
       </div>
     </div>
 
-    <!-- ── AI Generation Tab ──────────────────────────────────────── -->
     <div v-if="activeTab === 'ai'" class="tab-content">
       <AiGenPanel />
     </div>
 
-    <!-- ── Layers Tab ─────────────────────────────────────────────── -->
     <div v-if="activeTab === 'layers'" class="tab-content">
-
-      <!-- Empty state -->
       <div v-if="!canvasStore.hasImage && typoStore.textLayers.length === 0" class="layers-empty">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
           <polygon points="12 2 2 7 12 12 22 7 12 2"/>
           <polyline points="2 17 12 22 22 17"/>
           <polyline points="2 12 12 17 22 12"/>
         </svg>
-        <span>暂无图层</span>
-        <span class="layers-empty__hint">从"导入"选项卡添加图片</span>
+        <span>{{ t('leftPanel.empty.title') }}</span>
+        <span class="layers-empty__hint">{{ t('leftPanel.empty.hint') }}</span>
       </div>
 
-      <!-- Image layer -->
       <GlassCard v-if="canvasStore.hasImage && canvasStore.imageLayer" :padding="false">
         <div
           class="layer-row"
@@ -131,13 +129,12 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
           }"
           @click="canvasStore.activeLayerId = canvasStore.imageLayer!.id"
         >
-          <!-- Thumbnail -->
           <div class="layer-thumb-wrap">
             <img
               v-if="imageThumbnail"
               :src="imageThumbnail"
               class="layer-thumb"
-              alt="thumb"
+              :alt="t('leftPanel.imagePreview.alt')"
             />
             <div v-else class="layer-thumb layer-thumb--placeholder">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -145,13 +142,10 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
                 <polyline points="21 15 16 10 5 21"/>
               </svg>
             </div>
-            <!-- Pending pulse dot -->
             <div v-if="canvasStore.hasPendingMask" class="layer-thumb__dot layer-thumb__dot--pending" />
-            <!-- Mask indicator dot -->
             <div v-else-if="canvasStore.imageLayer?.hasMask" class="layer-thumb__dot layer-thumb__dot--masked" />
           </div>
 
-          <!-- Info -->
           <div class="layer-info">
             <span class="layer-name">{{ canvasStore.imageLayer.name }}</span>
             <span
@@ -165,12 +159,10 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
             </span>
           </div>
 
-          <!-- Actions -->
           <div class="layer-actions">
-            <!-- Visibility toggle -->
             <button
               class="layer-action-btn"
-              :title="canvasStore.imageLayer.visible ? '隐藏' : '显示'"
+              :title="canvasStore.imageLayer.visible ? t('common.hide') : t('common.show')"
               @click.stop="canvasStore.imageLayer!.visible = !canvasStore.imageLayer!.visible"
             >
               <svg v-if="canvasStore.imageLayer.visible" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -182,8 +174,7 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
                 <line x1="1" y1="1" x2="23" y2="23"/>
               </svg>
             </button>
-            <!-- Delete -->
-            <button class="layer-action-btn layer-action-btn--danger" title="删除" @click.stop="canvasStore.clearImage()">
+            <button class="layer-action-btn layer-action-btn--danger" :title="t('common.delete')" @click.stop="canvasStore.clearImage()">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
                 <path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
@@ -193,8 +184,7 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
         </div>
       </GlassCard>
 
-      <!-- Text layers -->
-      <GlassCard v-if="typoStore.textLayers.length > 0" title="文字图层" :padding="false">
+      <GlassCard v-if="typoStore.textLayers.length > 0" :title="t('leftPanel.textLayers.title')" :padding="false">
         <div
           v-for="layer in typoStore.textLayers"
           :key="layer.id"
@@ -202,32 +192,31 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
           :class="{ 'layer-row--active': typoStore.selectedLayerId === layer.id }"
           @click="typoStore.selectLayer(layer.id)"
         >
-          <!-- Thumbnail -->
           <div class="layer-thumb-wrap">
             <img
               v-if="textThumbnails[layer.id]"
               :src="textThumbnails[layer.id]"
               class="layer-thumb"
-              alt="text thumb"
+              :alt="t('leftPanel.textLayers.alt')"
             />
             <div v-else class="layer-thumb layer-thumb--text">
               <span>{{ layer.type === 'title' ? 'T' : 't' }}</span>
             </div>
           </div>
 
-          <!-- Info -->
           <div class="layer-info">
             <span class="layer-name" :style="{ fontFamily: layer.fontFamily }">
-              {{ layer.text || '空文字' }}
+              {{ layer.text || t('leftPanel.textLayers.emptyText') }}
             </span>
-            <span class="layer-status">{{ layer.type === 'title' ? '标题' : 'Slogan' }} · {{ layer.fontFamily }}</span>
+            <span class="layer-status">
+              {{ layer.type === 'title' ? t('leftPanel.textLayers.titleType') : t('leftPanel.textLayers.sloganType') }} · {{ layer.fontFamily }}
+            </span>
           </div>
 
-          <!-- Actions -->
           <div class="layer-actions">
             <button
               class="layer-action-btn"
-              :title="layer.visible ? '隐藏' : '显示'"
+              :title="layer.visible ? t('common.hide') : t('common.show')"
               @click.stop="typoStore.updateLayer(layer.id, { visible: !layer.visible })"
             >
               <svg v-if="layer.visible" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -238,7 +227,7 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
                 <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/>
               </svg>
             </button>
-            <button class="layer-action-btn layer-action-btn--danger" title="删除" @click.stop="typoStore.removeLayer(layer.id)">
+            <button class="layer-action-btn layer-action-btn--danger" :title="t('common.delete')" @click.stop="typoStore.removeLayer(layer.id)">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
                 <path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
@@ -263,7 +252,6 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
   border-right: 1px solid var(--border);
 }
 
-/* ── Tabs ─────────────────────────────────────────────────────────── */
 .panel-tabs {
   display: flex;
   gap: var(--space-1);
@@ -317,7 +305,6 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
   overflow-y: auto;
 }
 
-/* ── Drop zone ────────────────────────────────────────────────────── */
 .drop-zone {
   display: flex;
   flex-direction: column;
@@ -343,7 +330,6 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
 .drop-zone__sub { font-size: var(--text-xs); color: var(--text-tertiary); }
 .drop-zone__formats { font-size: var(--text-xs); color: var(--text-disabled); letter-spacing: 0.05em; }
 
-/* ── Import tab image-preview ─────────────────────────────────────── */
 .image-preview {
   display: flex;
   align-items: center;
@@ -402,7 +388,6 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
 }
 .image-preview__remove:hover { color: var(--danger); background: rgba(239,68,68,0.1); }
 
-/* ── Layers empty ─────────────────────────────────────────────────── */
 .layers-empty {
   display: flex;
   flex-direction: column;
@@ -415,7 +400,6 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
 }
 .layers-empty__hint { font-size: var(--text-xs); color: var(--text-disabled); }
 
-/* ── Layer row ────────────────────────────────────────────────────── */
 .layer-row {
   display: flex;
   align-items: center;
@@ -430,7 +414,6 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
 .layer-row--active { background: rgba(99, 102, 241, 0.08); }
 .layer-row--pending { background: rgba(99, 102, 241, 0.06); }
 
-/* Thumbnail container */
 .layer-thumb-wrap {
   position: relative;
   width: 40px;
@@ -462,7 +445,6 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
   font-weight: 700;
 }
 
-/* Status dot overlays on thumbnail */
 .layer-thumb__dot {
   position: absolute;
   bottom: 2px;
@@ -484,7 +466,6 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
   50% { opacity: 0.6; transform: scale(0.8); }
 }
 
-/* Layer info */
 .layer-info {
   display: flex;
   flex-direction: column;
@@ -509,7 +490,6 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
 .layer-status--pending { color: var(--accent-hover); }
 .layer-status--masked { color: var(--success); }
 
-/* Layer action buttons */
 .layer-actions {
   display: flex;
   gap: 2px;
@@ -534,7 +514,6 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
 .layer-action-btn:hover { color: var(--text-primary); background: var(--bg-button-hover); }
 .layer-action-btn--danger:hover { color: var(--danger); background: rgba(239,68,68,0.1); }
 
-/* AI tab accent */
 .panel-tab--ai.active {
   background: rgba(99,102,241,0.15);
   color: var(--accent-hover);

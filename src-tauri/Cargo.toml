@@ -9,8 +9,10 @@ edition = "2021"
 
 [features]
 default = []
-# Enable NVIDIA GPU acceleration (requires CUDA Toolkit installed)
-cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+# Enable NVIDIA GPU acceleration (requires CUDA Toolkit installed on Windows/Linux)
+cuda  = ["candle-core/cuda",  "candle-nn/cuda",  "candle-transformers/cuda"]
+# Enable Apple Metal GPU acceleration (macOS only)
+metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary

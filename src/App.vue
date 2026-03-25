@@ -1,23 +1,24 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAppStore } from './store/useAppStore'
+import { localeOptions } from './i18n'
 import ThemeToggle from './components/ui/ThemeToggle.vue'
 import LeftPanel from './components/layout/LeftPanel.vue'
 import CenterCanvas from './components/layout/CenterCanvas.vue'
 import RightPanel from './components/layout/RightPanel.vue'
 
 const app = useAppStore()
+const { t } = useI18n()
 
-onMounted(() => {
-  // Restore theme from localStorage
-  const saved = localStorage.getItem('ls-theme') as 'dark' | 'light' | null
-  if (saved) app.setTheme(saved)
+const nextLocale = computed(() => {
+  const currentIndex = localeOptions.findIndex((option) => option.code === app.locale)
+  return localeOptions[(currentIndex + 1) % localeOptions.length] ?? localeOptions[0]
 })
 </script>
 
 <template>
   <div class="app-shell">
-    <!-- Title bar -->
     <header class="title-bar" data-tauri-drag-region>
       <div class="title-bar__left">
         <div class="app-logo">
@@ -33,7 +34,7 @@ onMounted(() => {
             <path d="M9 13h6" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
           </svg>
         </div>
-        <span class="app-name">Logo Studio</span>
+        <span class="app-name">{{ t('app.title') }}</span>
         <span class="app-badge">v0.1</span>
       </div>
 
@@ -41,30 +42,28 @@ onMounted(() => {
         <ThemeToggle />
         <button
           class="btn-ghost lang-btn"
-          @click="app.setLocale(app.locale === 'zh' ? 'en' : 'zh')"
+          :title="t('app.switchLanguageTo', { language: nextLocale.label })"
+          @click="app.setLocale(nextLocale.code)"
           style="font-size: 11px; padding: 5px 8px; height: 32px;"
         >
-          {{ app.locale === 'zh' ? 'EN' : '中文' }}
+          {{ nextLocale.code.toUpperCase() }}
         </button>
       </div>
     </header>
 
-    <!-- Main layout -->
     <div class="workspace">
       <LeftPanel />
       <CenterCanvas />
       <RightPanel />
     </div>
 
-    <!-- Global loading overlay -->
     <Transition name="fade">
       <div v-if="app.isLoading" class="loading-overlay">
         <div class="loading-spinner" />
-        <p class="loading-text">{{ app.loadingText || '处理中...' }}</p>
+        <p class="loading-text">{{ app.loadingText || t('app.loading.processing') }}</p>
       </div>
     </Transition>
 
-    <!-- Toast notification -->
     <Transition name="toast-slide">
       <div
         v-if="app.toastMessage"
@@ -73,9 +72,9 @@ onMounted(() => {
         @click="app.dismissToast()"
       >
         <span class="toast__icon">
-          <template v-if="app.toastType === 'warn'">⚠</template>
-          <template v-else-if="app.toastType === 'error'">✕</template>
-          <template v-else>ℹ</template>
+          <template v-if="app.toastType === 'warn'">!</template>
+          <template v-else-if="app.toastType === 'error'">×</template>
+          <template v-else>i</template>
         </span>
         <span class="toast__msg">{{ app.toastMessage }}</span>
       </div>
@@ -147,7 +146,6 @@ onMounted(() => {
   overflow: hidden;
 }
 
-/* Loading overlay */
 .loading-overlay {
   position: fixed;
   inset: 0;
@@ -188,7 +186,6 @@ onMounted(() => {
   opacity: 0;
 }
 
-/* Toast */
 .toast {
   position: fixed;
   bottom: 24px;

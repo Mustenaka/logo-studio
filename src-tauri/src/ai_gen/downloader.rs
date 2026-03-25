@@ -42,7 +42,10 @@ pub fn models_root() -> PathBuf {
         .any(|c| c.as_os_str() == "debug" || c.as_os_str() == "release");
 
     if is_dev {
-        let dev = exe_dir.join("../../ai_models");
+        // exe is at src-tauri/target/debug/ — go up 3 levels to land at the
+        // project root (logo-studio/ai_models), which is outside src-tauri and
+        // therefore not watched by `tauri dev`, preventing rebuild loops.
+        let dev = exe_dir.join("../../../ai_models");
         return dev.canonicalize().unwrap_or(dev);
     }
     exe_dir.join("ai_models")
@@ -54,7 +57,9 @@ pub fn model_dir(model_id: &str) -> PathBuf {
 
 fn expected_paths(def: &ModelDef, dir: &Path) -> ModelPaths {
     ModelPaths {
-        tokenizer:    dir.join("tokenizer/tokenizer.json"),
+        // tokenizer.json is fetched from openai/clip-vit-large-patch14, not the model repo.
+        // SD model repos only ship vocab.json + merges.txt, not the compiled tokenizer.json.
+        tokenizer:    dir.join("tokenizer.json"),
         clip_weights: dir.join("text_encoder/model.safetensors"),
         unet_weights: dir.join("unet/diffusion_pytorch_model.safetensors"),
         vae_weights:  dir.join("vae/diffusion_pytorch_model.safetensors"),
@@ -198,11 +203,14 @@ pub async fn download_model(
     std::fs::create_dir_all(&dir)
         .map_err(|e| DownloadError::Other(format!("Create model dir: {e}")))?;
 
+    // SD model repos only contain BPE vocab files, not a compiled tokenizer.json.
+    // The fast tokenizer is fetched from openai/clip-vit-large-patch14 which ships
+    // it at the repo root — this is what candle's own SD examples do.
     let mut files: Vec<(&str, &str, PathBuf)> = vec![
-        (def.hf_repo, "tokenizer/tokenizer.json",                 dir.join("tokenizer/tokenizer.json")),
-        (def.hf_repo, "text_encoder/model.safetensors",           dir.join("text_encoder/model.safetensors")),
-        (def.hf_repo, "unet/diffusion_pytorch_model.safetensors", dir.join("unet/diffusion_pytorch_model.safetensors")),
-        (def.hf_repo, "vae/diffusion_pytorch_model.safetensors",  dir.join("vae/diffusion_pytorch_model.safetensors")),
+        ("openai/clip-vit-large-patch14", "tokenizer.json",                        dir.join("tokenizer.json")),
+        (def.hf_repo,                     "text_encoder/model.safetensors",         dir.join("text_encoder/model.safetensors")),
+        (def.hf_repo,                     "unet/diffusion_pytorch_model.safetensors", dir.join("unet/diffusion_pytorch_model.safetensors")),
+        (def.hf_repo,                     "vae/diffusion_pytorch_model.safetensors",  dir.join("vae/diffusion_pytorch_model.safetensors")),
     ];
 
     if let Some(lora) = &def.lora {

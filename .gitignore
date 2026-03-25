@@ -31,6 +31,8 @@ src-tauri/gen/
 # ===========================
 # AI model files (large binaries, download separately)
 # ===========================
+/ai_models/
+/src-tauri/ai_models/
 src-tauri/models/
 
 # ===========================

@@ -1,32 +1,281 @@
 {
   "app": {
     "title": "Logo Studio",
-    "tagline": "Professional Logo Design Tool"
+    "tagline": "Professional Logo Design Tool",
+    "switchLanguageTo": "Switch to {language}",
+    "loading": {
+      "processing": "Processing..."
+    }
   },
-  "panel": {
-    "import": "Import",
-    "layers": "Layers",
-    "background": "Background",
-    "image": "Image",
-    "typography": "Text",
-    "export": "Export"
+  "theme": {
+    "switchToLight": "Switch to light theme",
+    "switchToDark": "Switch to dark theme"
   },
-  "import": {
-    "dropHint": "Drop image here",
-    "clickHint": "or click to browse",
-    "formats": "PNG · JPG · WebP · SVG"
+  "common": {
+    "show": "Show",
+    "hide": "Hide",
+    "delete": "Delete",
+    "remove": "Remove",
+    "save": "Save",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "close": "Close",
+    "random": "Random",
+    "on": "On",
+    "off": "Off",
+    "preparing": "Preparing..."
   },
-  "segment": {
-    "auto": "Auto Segment",
-    "point": "Click Select",
-    "processing": "Processing...",
-    "clearMask": "Clear Mask",
-    "confirm": "Confirm Segment"
+  "leftPanel": {
+    "tabs": {
+      "import": "Import",
+      "layers": "Layers",
+      "ai": "AI Generate"
+    },
+    "dropZone": {
+      "title": "Drop image here",
+      "subtitle": "or click to browse",
+      "formats": "PNG · JPG · WebP · SVG"
+    },
+    "imagePreview": {
+      "alt": "Image preview"
+    },
+    "empty": {
+      "title": "No layers yet",
+      "hint": "Add an image from the Import tab"
+    },
+    "layerStatus": {
+      "preview": "Previewing",
+      "masked": "Cutout Applied",
+      "original": "Original"
+    },
+    "textLayers": {
+      "title": "Text Layers",
+      "alt": "Text layer thumbnail",
+      "emptyText": "Empty Text",
+      "titleType": "Title",
+      "sloganType": "Slogan"
+    }
   },
-  "export": {
-    "title": "Export Settings",
-    "size": "Export Size",
-    "format": "Format",
-    "canvasSize": "Canvas Size"
+  "rightPanel": {
+    "nav": {
+      "background": "Background",
+      "typography": "Text",
+      "export": "Export"
+    },
+    "background": {
+      "presets": "Presets",
+      "gradient": "Gradient",
+      "angle": "Angle",
+      "shape": "Shape",
+      "radius": "Corner Radius",
+      "shadow": "Shadow",
+      "blur": "Blur",
+      "offsetY": "Offset Y"
+    },
+    "typography": {
+      "addText": "Add Text",
+      "textLayers": "Text Layers",
+      "title": "Title",
+      "slogan": "Slogan",
+      "editLayer": "Edit: {type}",
+      "fields": {
+        "content": "Text Content",
+        "font": "Font",
+        "color": "Color",
+        "fontSize": "Font Size",
+        "fontWeight": "Font Weight",
+        "letterSpacing": "Letter Spacing",
+        "yPosition": "Y Position"
+      }
+    },
+    "export": {
+      "singlePng": "Export Single PNG",
+      "canvasSize": "Canvas Size",
+      "format": "Format",
+      "pngAlpha": "PNG (Transparent Alpha)",
+      "exportOriginalSize": "Original Size",
+      "exportOriginalSizeHint": "Export at the original image's native resolution ({w} × {h} px)",
+      "iconSet": "Generate Icon Set",
+      "iconSetHint": "Generate platform icon assets automatically and save them to the folder you choose.",
+      "presets": {
+        "web": {
+          "label": "Web Icons",
+          "desc": "10 sizes (16-512px)"
+        },
+        "ios": {
+          "label": "iOS",
+          "desc": "16 variants (iPhone + iPad)"
+        },
+        "android": {
+          "label": "Android",
+          "desc": "7 variants (LDPI-XXXHDPI)"
+        },
+        "macos": {
+          "label": "macOS",
+          "desc": "10 variants (including {'@'}2x)"
+        },
+        "full": {
+          "label": "Full Bundle",
+          "desc": "All platforms, 43 assets total"
+        }
+      }
+    }
+  },
+  "centerCanvas": {
+    "toolbar": {
+      "resetView": "Reset View",
+      "zoomIn": "Zoom In",
+      "zoomOut": "Zoom Out",
+      "image": "Image",
+      "scaleDownImage": "Scale image down 10%",
+      "currentImageScale": "Current image scale",
+      "scaleUpImage": "Scale image up 10%",
+      "centerImage": "Center image",
+      "center": "Center",
+      "adjustments": "Adjust",
+      "imageAdjustments": "Image adjustments",
+      "segmentationTools": "AI cutout tools",
+      "cutout": "Cutout"
+    },
+    "adjustments": {
+      "brightness": "Brightness",
+      "contrast": "Contrast",
+      "saturation": "Saturation",
+      "opacity": "Opacity"
+    },
+    "empty": {
+      "title": "Import an image from the left panel to start designing"
+    },
+    "quickBar": {
+      "title": "AI Cutout",
+      "strength": "Strength",
+      "strengthHint": "Higher values remove more background",
+      "threshold": "Threshold {value}",
+      "thresholdHint": "Lower SAM2 thresholds keep more detail; higher thresholds produce cleaner edges",
+      "edge": "Edge {value}px",
+      "edgeHint": "Alpha matting refinement radius in pixels",
+      "auto": "One-Click Cutout",
+      "point": "Point Mode",
+      "clearMask": "Clear Mask",
+      "close": "Close cutout bar"
+    },
+    "pointBar": {
+      "hint": "Click the image to pick the subject · Shift+Click to exclude an area",
+      "count": "{count} points marked",
+      "run": "Run Cutout ({count})"
+    },
+    "finetune": {
+      "erase": "Eraser",
+      "eraseHint": "Erase by painting over the kept area",
+      "brush": "Brush",
+      "brushHint": "Restore by painting over transparent areas",
+      "brushSize": "Brush Size",
+      "eraseGuide": "Paint over kept regions to erase them",
+      "brushGuide": "Paint over transparent regions to restore them"
+    },
+    "confirmBar": {
+      "previewTitle": "Cutout Preview",
+      "previewSubtitle": "Apply the result to the layer or discard it and try again",
+      "finetuneTitle": "Fine-Tune Mode",
+      "finetuneSubtitle": "Refine cutout edges with the brush, then confirm when finished",
+      "discard": "Discard",
+      "invert": "Invert",
+      "invertHint": "Invert the mask selection (disabled in fine-tune mode)",
+      "finetune": "Fine-Tune",
+      "exitFinetune": "Exit Fine-Tune",
+      "finetuneHint": "Use the brush to refine cutout details manually",
+      "apply": "Apply"
+    }
+  },
+  "aiGen": {
+    "device": {
+      "gpu": "GPU",
+      "cpu": "CPU",
+      "gpuHint": "GPU not enabled",
+      "gpuHintDetail": "GPU detected but this binary was compiled without GPU support. Close this window and run: npm run tauri:dev:gpu (NVIDIA) or npm run tauri:dev:metal (Apple) to restart with GPU acceleration.",
+      "gpuCmdCopied": "Command copied — paste it in your terminal to restart with GPU"
+    },
+    "token": {
+      "title": "HuggingFace Token",
+      "set": "Set",
+      "unset": "Not Set",
+      "authRequired": "This download requires a token. Click to configure it.",
+      "delete": "Delete token",
+      "help": "Some models require a token before they can be downloaded.",
+      "getLink": "Get a HuggingFace token →",
+      "placeholder": "Enter your HuggingFace token",
+      "saving": "Saving...",
+      "save": "Save"
+    },
+    "sections": {
+      "models": "Choose Model",
+      "prompt": "Prompt",
+      "advanced": "Advanced Settings",
+      "negativePrompt": "Negative Prompt",
+      "steps": "Steps",
+      "stepsHint": "CPU recommended ≤ 20",
+      "guidance": "CFG Scale",
+      "guidanceHint": "Higher = stronger prompt adherence",
+      "resolution": "Resolution",
+      "negativePromptHint": "what to avoid",
+      "seed": "Seed"
+    },
+    "models": {
+      "downloaded": "Downloaded",
+      "notDownloaded": "Not downloaded",
+      "download": "Download (~{size} GB)",
+      "ready": "Ready"
+    },
+    "promptPlaceholder": "Describe the logo you want to generate...",
+    "negativePromptPlaceholder": "blurry, low quality, watermark, ugly, deformed, text, signature",
+    "seedPlaceholder": "Enter seed",
+    "actions": {
+      "generateProgress": "Generating {step} / {total} steps",
+      "downloadModelFirst": "Download a model first",
+      "enterPromptFirst": "Enter a prompt to generate",
+      "generate": "Generate Logo"
+    },
+    "cpuWarning": "Running on CPU mode. Generation may take about 2-5 minutes."
+  },
+  "aiGenModule": {
+    "toast": {
+      "downloadComplete": "Model download complete",
+      "tokenRequired": "A HuggingFace token is required. Please configure it in settings.",
+      "downloadFailed": "Download failed",
+      "downloadFailedWithReason": "Download failed: {error}",
+      "generateFailed": "Generation failed",
+      "generateComplete": "Generation complete ({steps} steps · {device})",
+      "generateFailedWithReason": "Generation failed: {error}",
+      "tokenSaved": "Token saved",
+      "saveFailed": "Save failed: {error}",
+      "tokenDeleted": "Token deleted",
+      "deleteFailed": "Delete failed: {error}"
+    }
+  },
+  "exportModule": {
+    "loading": {
+      "exportPng": "Exporting {size}px PNG...",
+      "exportOriginal": "Exporting original size {size}px PNG...",
+      "generateSet": "Generating {label} icon set...",
+      "rendering": "Rendering high-resolution image...",
+      "generateFiles": "Generating {count} icon files..."
+    },
+    "dialog": {
+      "savePngTitle": "Save PNG",
+      "pngFilterName": "PNG Image",
+      "chooseFolder": "Choose output folder for {label}"
+    },
+    "status": {
+      "saved": "Saved: {path}",
+      "failed": "Export failed: {error}",
+      "generated": "Generated {count} icon files in: {dir}"
+    }
+  },
+  "segmentationModule": {
+    "loading": {
+      "auto": "AI auto cutout is running. The first run may take 1-2 minutes...",
+      "point": "AI point-based cutout is running. The first run may take 1-2 minutes..."
+    },
+    "fallbackWarning": "SAM2 is not ready yet. A fallback method was used: {method}"
   }
 }

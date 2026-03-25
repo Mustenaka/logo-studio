@@ -16,15 +16,18 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useAppStore } from '../../store/useAppStore'
+import { i18n } from '../../i18n'
 import { useImageEditor } from '../image-editor/useImageEditor'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface DeviceInfo {
-  kind: 'cpu' | 'cuda'
+  kind: 'cpu' | 'cuda' | 'metal'
   name: string
   vramMb: number | null
   isAccelerated: boolean
+  /** True when a GPU was found at runtime but the cuda/metal feature is not compiled in */
+  gpuAvailableButDisabled: boolean
 }
 
 export interface ModelStatus {
@@ -85,6 +88,7 @@ export interface GenerateOptions {
 // ── Composable ────────────────────────────────────────────────────────────────
 
 export function useAiGen() {
+  const tr = (key: string, params?: Record<string, unknown>) => params ? i18n.global.t(key, params) : i18n.global.t(key)
   const appStore = useAppStore()
   const { importImageFromDataUrl } = useImageEditor()
 
@@ -181,19 +185,19 @@ export function useAiGen() {
 
       if (result.success) {
         await refreshModel(modelId)
-        appStore.showToast('模型下载完成', 'info')
+        appStore.showToast(tr('aiGenModule.toast.downloadComplete'), 'info')
         return
       }
 
       if (result.errorKind === 'auth_required') {
         authRequiredModelId.value = modelId
         showTokenPanel.value = true
-        appStore.showToast('需要 HuggingFace Token，请在设置中填写', 'warn')
+        appStore.showToast(tr('aiGenModule.toast.tokenRequired'), 'warn')
       } else {
-        appStore.showToast(result.errorMessage ?? '下载失败', 'error')
+        appStore.showToast(result.errorMessage ?? tr('aiGenModule.toast.downloadFailed'), 'error')
       }
     } catch (e: any) {
-      appStore.showToast(`下载失败: ${e}`, 'error')
+      appStore.showToast(tr('aiGenModule.toast.downloadFailedWithReason', { error: String(e) }), 'error')
     } finally {
       downloadingModelId.value = null
       downloadProgress.value = null
@@ -224,12 +228,18 @@ export function useAiGen() {
         seed: opts.seed ?? null,
       })
 
-      if (!result.success || !result.image) throw new Error(result.error ?? '生成失败')
+      if (!result.success || !result.image) throw new Error(result.error ?? tr('aiGenModule.toast.generateFailed'))
 
       await importImageFromDataUrl(`data:image/png;base64,${result.image}`)
-      appStore.showToast(`生成完成（${result.stepsTaken} 步 · ${result.deviceKind.toUpperCase()}）`, 'info')
+      appStore.showToast(
+        tr('aiGenModule.toast.generateComplete', {
+          steps: result.stepsTaken,
+          device: result.deviceKind.toUpperCase(),
+        }),
+        'info',
+      )
     } catch (e: any) {
-      appStore.showToast(`生成失败: ${e}`, 'error')
+      appStore.showToast(tr('aiGenModule.toast.generateFailedWithReason', { error: String(e) }), 'error')
     } finally {
       isGenerating.value = false
       stepProgress.value = null
@@ -242,7 +252,7 @@ export function useAiGen() {
     try {
       await invoke('ai_gen_set_hf_token', { token })
       await fetchTokenStatus()
-      appStore.showToast('Token 已保存', 'info')
+      appStore.showToast(tr('aiGenModule.toast.tokenSaved'), 'info')
       showTokenPanel.value = false
       // Retry the download that triggered auth if applicable
       if (authRequiredModelId.value) {
@@ -251,7 +261,7 @@ export function useAiGen() {
         await downloadModel(mid)
       }
     } catch (e: any) {
-      appStore.showToast(`保存失败: ${e}`, 'error')
+      appStore.showToast(tr('aiGenModule.toast.saveFailed', { error: String(e) }), 'error')
     }
   }
 
@@ -259,9 +269,9 @@ export function useAiGen() {
     try {
       await invoke('ai_gen_delete_hf_token')
       await fetchTokenStatus()
-      appStore.showToast('Token 已删除', 'info')
+      appStore.showToast(tr('aiGenModule.toast.tokenDeleted'), 'info')
     } catch (e: any) {
-      appStore.showToast(`删除失败: ${e}`, 'error')
+      appStore.showToast(tr('aiGenModule.toast.deleteFailed', { error: String(e) }), 'error')
     }
   }
 

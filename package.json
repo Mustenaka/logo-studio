@@ -6,8 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
+    "test": "vitest run",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:dev:gpu": "tauri dev --features cuda",
+    "tauri:build:gpu": "tauri build --features cuda",
+    "tauri:dev:metal": "tauri dev --features metal",
+    "tauri:build:metal": "tauri build --features metal"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -23,6 +30,7 @@
     "@vitejs/plugin-vue": "^5.2.1",
     "typescript": "~5.6.2",
     "vite": "^6.0.3",
+    "vitest": "^3.2.4",
     "vue-tsc": "^2.1.10"
   }
 }

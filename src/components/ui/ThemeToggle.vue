@@ -1,11 +1,13 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { useAppStore } from '../../store/useAppStore'
 
 const app = useAppStore()
+const { t } = useI18n()
 </script>
 
 <template>
-  <button class="theme-toggle" @click="app.toggleTheme" :title="app.theme === 'dark' ? 'Switch to Light' : 'Switch to Dark'">
+  <button class="theme-toggle" @click="app.toggleTheme" :title="app.theme === 'dark' ? t('theme.switchToLight') : t('theme.switchToDark')">
     <!-- Sun icon -->
     <svg v-if="app.theme === 'dark'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="12" cy="12" r="5"/>

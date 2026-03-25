@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAiGen } from '../../modules/ai-gen/useAiGen'
+import { useAppStore } from '../../store/useAppStore'
 
 const aiGen = useAiGen()
+const { t } = useI18n()
+const appStore = useAppStore()
 
 // Local form state
 const prompt = ref('')
@@ -10,6 +14,9 @@ const negativePrompt = ref('blurry, low quality, watermark, ugly, deformed, text
 const showAdvanced = ref(false)
 const customSteps = ref<number | null>(null)
 const customGuidance = ref<number | null>(null)
+// Default 256×256 — fast enough for CPU; user can raise it in advanced settings
+const customWidth = ref<number>(256)
+const customHeight = ref<number>(256)
 const seed = ref<number | null>(null)
 const randomSeed = ref(true)
 
@@ -41,10 +48,28 @@ const effectiveGuidance = computed(() =>
   customGuidance.value ?? aiGen.selectedModel.value?.defaultGuidance ?? 7.5
 )
 
+const resolutionOptions = computed(() => {
+  const base = aiGen.selectedModel.value?.base
+  // 256 is the fast default; 512 is SD-native quality; SDXL can go to 1024
+  if (base === 'sdxl') return [256, 512, 1024]
+  return [256, 512, 768]
+})
+
+// customWidth/Height always have a value (default 256), so no fallback needed
+const effectiveWidth = computed(() => customWidth.value)
+const effectiveHeight = computed(() => customHeight.value)
+
 function formatBytes(b: number): string {
   if (b >= 1_073_741_824) return `${(b / 1_073_741_824).toFixed(1)} GB`
   if (b >= 1_048_576) return `${(b / 1_048_576).toFixed(0)} MB`
   return `${(b / 1024).toFixed(0)} KB`
+}
+
+async function copyGpuCommand() {
+  try {
+    await navigator.clipboard.writeText('npm run tauri:dev:gpu')
+    appStore.showToast(t('aiGen.device.gpuCmdCopied'), 'info')
+  } catch { /* clipboard not available */ }
 }
 
 async function handleSaveToken() {
@@ -63,8 +88,24 @@ async function handleGenerate() {
     negativePrompt: negativePrompt.value || undefined,
     steps: customSteps.value ?? undefined,
     guidance: customGuidance.value ?? undefined,
+    width: customWidth.value,
+    height: customHeight.value,
     seed: randomSeed.value ? null : seed.value,
   })
+}
+
+function clampSteps(val: string) {
+  const n = parseInt(val, 10)
+  if (isNaN(n)) return
+  const min = aiGen.selectedModel.value?.base === 'sdxl' ? 1 : 10
+  const max = aiGen.selectedModel.value?.base === 'sdxl' ? 8 : 50
+  customSteps.value = Math.min(max, Math.max(min, n))
+}
+
+function clampGuidance(val: string) {
+  const n = parseFloat(val)
+  if (isNaN(n)) return
+  customGuidance.value = Math.min(15, Math.max(1, n))
 }
 
 function handleSelectModel(id: string) {
@@ -78,9 +119,24 @@ function handleSelectModel(id: string) {
   <div class="ai-panel">
 
     <!-- ── Device badge ──────────────────────────────────────────────── -->
-    <div v-if="aiGen.device.value" class="device-badge" :class="aiGen.device.value.kind">
-      <span class="device-badge__dot" />
-      <span>{{ aiGen.device.value.isAccelerated ? 'GPU · ' : 'CPU · ' }}{{ aiGen.device.value.name }}</span>
+    <div class="device-row">
+      <div v-if="aiGen.device.value" class="device-badge" :class="aiGen.device.value.kind">
+        <span class="device-badge__dot" />
+        <span>{{ aiGen.device.value.isAccelerated ? 'GPU · ' : 'CPU · ' }}{{ aiGen.device.value.name }}</span>
+      </div>
+      <!-- GPU present but feature not compiled in -->
+      <div
+        v-if="aiGen.device.value?.gpuAvailableButDisabled"
+        class="gpu-hint-badge"
+        :title="t('aiGen.device.gpuHintDetail')"
+        @click="copyGpuCommand"
+      >
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+        </svg>
+        {{ t('aiGen.device.gpuHint') }}
+        <code class="gpu-hint-cmd">npm run tauri:dev:gpu</code>
+      </div>
     </div>
 
     <!-- ── HF Token panel ─────────────────────────────────────────────── -->
@@ -92,9 +148,9 @@ function handleSelectModel(id: string) {
             <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
             <path d="M7 11V7a5 5 0 0110 0v4"/>
           </svg>
-          <span>HuggingFace Token</span>
-          <span v-if="aiGen.hfTokenStatus.value.hasToken" class="token-badge token-badge--set">已设置</span>
-          <span v-else class="token-badge token-badge--unset">未设置</span>
+          <span>{{ t('aiGen.token.title') }}</span>
+          <span v-if="aiGen.hfTokenStatus.value.hasToken" class="token-badge token-badge--set">{{ t('aiGen.token.set') }}</span>
+          <span v-else class="token-badge token-badge--unset">{{ t('aiGen.token.unset') }}</span>
         </div>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
           :style="{ transform: aiGen.showTokenPanel.value ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }">
@@ -107,7 +163,7 @@ function handleSelectModel(id: string) {
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
         </svg>
-        <span>下载需要 Token，点击设置</span>
+        <span>{{ t('aiGen.token.authRequired') }}</span>
       </div>
 
       <Transition name="expand">
@@ -115,7 +171,7 @@ function handleSelectModel(id: string) {
           <!-- Current token display -->
           <div v-if="aiGen.hfTokenStatus.value.hasToken" class="token-current">
             <code class="token-masked">{{ aiGen.hfTokenStatus.value.masked }}</code>
-            <button class="btn-token-del" @click="aiGen.deleteToken()" title="删除 Token">
+            <button class="btn-token-del" @click="aiGen.deleteToken()" :title="t('aiGen.token.delete')">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
               </svg>
@@ -123,9 +179,9 @@ function handleSelectModel(id: string) {
           </div>
 
           <p class="token-help">
-            需要 Token 才能下载部分模型。
+            {{ t('aiGen.token.help') }}
             <button class="link-btn" @click="aiGen.openHfTokenPage()">
-              在 HuggingFace 获取 Token →
+              {{ t('aiGen.token.getLink') }}
             </button>
           </p>
 
@@ -144,7 +200,7 @@ function handleSelectModel(id: string) {
               :disabled="!tokenInput.trim() || savingToken"
               @click="handleSaveToken"
             >
-              {{ savingToken ? '保存中…' : '保存' }}
+              {{ savingToken ? t('aiGen.token.saving') : t('aiGen.token.save') }}
             </button>
           </div>
         </div>
@@ -152,7 +208,7 @@ function handleSelectModel(id: string) {
     </div>
 
     <!-- ── Model selector ────────────────────────────────────────────── -->
-    <div class="section-label">选择模型</div>
+    <div class="section-label">{{ t('aiGen.sections.models') }}</div>
     <div class="model-list">
       <div
         v-for="model in aiGen.models.value"
@@ -171,8 +227,8 @@ function handleSelectModel(id: string) {
             <span class="model-card__tag">{{ model.base === 'sd15' ? 'SD 1.5' : 'SDXL' }}</span>
           </div>
           <!-- Status indicator -->
-          <span v-if="model.isDownloaded" class="status-dot status-dot--ready" title="已下载" />
-          <span v-else class="status-dot status-dot--pending" title="未下载" />
+          <span v-if="model.isDownloaded" class="status-dot status-dot--ready" :title="t('aiGen.models.downloaded')" />
+          <span v-else class="status-dot status-dot--pending" :title="t('aiGen.models.notDownloaded')" />
         </div>
 
         <p class="model-card__desc">{{ model.description }}</p>
@@ -181,7 +237,7 @@ function handleSelectModel(id: string) {
         <template v-if="aiGen.downloadingModelId.value === model.id">
           <div class="progress-wrap">
             <div class="progress-label">
-              <span class="progress-file">{{ aiGen.downloadProgress.value?.fileName ?? '准备中...' }}</span>
+              <span class="progress-file">{{ aiGen.downloadProgress.value?.fileName ?? t('common.preparing') }}</span>
               <span class="progress-pct">{{ Math.round(aiGen.downloadProgress.value?.percent ?? 0) }}%</span>
             </div>
             <div class="progress-bar">
@@ -210,96 +266,170 @@ function handleSelectModel(id: string) {
               <polyline points="7 10 12 15 17 10"/>
               <line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
-            下载 (~{{ (model.sizeMb / 1024).toFixed(1) }} GB)
+            {{ t('aiGen.models.download', { size: (model.sizeMb / 1024).toFixed(1) }) }}
           </button>
           <div v-else class="model-card__ready">
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <polyline points="20 6 9 17 4 12"/>
             </svg>
-            已就绪
+            {{ t('aiGen.models.ready') }}
           </div>
         </div>
       </div>
     </div>
 
     <!-- ── Prompt ─────────────────────────────────────────────────────── -->
-    <div class="section-label">提示词</div>
+    <div class="section-label">{{ t('aiGen.sections.prompt') }}</div>
     <textarea
       v-model="prompt"
       class="prompt-input"
-      :placeholder="aiGen.selectedModel.value?.examplePrompt ?? '描述你想生成的 logo...'"
+      :placeholder="aiGen.selectedModel.value?.examplePrompt ?? t('aiGen.promptPlaceholder')"
       :disabled="aiGen.isGenerating.value"
       rows="3"
     />
 
-    <!-- Negative prompt -->
-    <div class="neg-prompt-toggle" @click="showAdvanced = !showAdvanced">
-      <span>高级设置</span>
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+    <!-- ── Negative Prompt (always visible) ───────────────────────── -->
+    <div class="section-label section-label--neg">
+      <span>{{ t('aiGen.sections.negativePrompt') }}</span>
+      <span class="label-hint">{{ t('aiGen.sections.negativePromptHint') }}</span>
+    </div>
+    <textarea
+      v-model="negativePrompt"
+      class="prompt-input prompt-input--neg"
+      :placeholder="t('aiGen.negativePromptPlaceholder')"
+      :disabled="aiGen.isGenerating.value"
+      rows="2"
+    />
+
+    <!-- ── Advanced settings toggle ───────────────────────────────── -->
+    <div class="advanced-toggle" @click="showAdvanced = !showAdvanced">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 010 14.14M4.93 4.93a10 10 0 000 14.14"/>
+      </svg>
+      <span>{{ t('aiGen.sections.advanced') }}</span>
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
         :style="{ transform: showAdvanced ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }">
         <polyline points="6 9 12 15 18 9"/>
       </svg>
     </div>
 
     <div v-if="showAdvanced" class="advanced-wrap">
-      <!-- Negative prompt -->
-      <div class="field-label">负面提示词</div>
-      <textarea
-        v-model="negativePrompt"
-        class="prompt-input prompt-input--neg"
-        rows="2"
-        :disabled="aiGen.isGenerating.value"
-      />
 
       <!-- Steps -->
-      <div class="field-row">
-        <div class="field-label">步数</div>
-        <div class="field-hint">CPU 建议 ≤ 20</div>
-      </div>
-      <div class="steps-row">
-        <input
-          type="range"
-          class="range-input"
-          :min="aiGen.selectedModel.value?.base === 'sdxl' ? 1 : 10"
-          :max="aiGen.selectedModel.value?.base === 'sdxl' ? 8 : 50"
-          :value="effectiveSteps"
-          :disabled="aiGen.isGenerating.value"
-          @input="customSteps = Number(($event.target as HTMLInputElement).value)"
-        />
-        <span class="steps-val">{{ effectiveSteps }}</span>
+      <div class="adv-row">
+        <label class="adv-label">
+          {{ t('aiGen.sections.steps') }}
+          <span class="adv-hint">{{ t('aiGen.sections.stepsHint') }}</span>
+        </label>
+        <div class="adv-control">
+          <input
+            type="range"
+            class="range-input"
+            :min="aiGen.selectedModel.value?.base === 'sdxl' ? 1 : 10"
+            :max="aiGen.selectedModel.value?.base === 'sdxl' ? 8 : 50"
+            :value="effectiveSteps"
+            :disabled="aiGen.isGenerating.value"
+            @input="customSteps = Number(($event.target as HTMLInputElement).value)"
+          />
+          <input
+            type="number"
+            class="adv-num-input"
+            :min="aiGen.selectedModel.value?.base === 'sdxl' ? 1 : 10"
+            :max="aiGen.selectedModel.value?.base === 'sdxl' ? 8 : 50"
+            :value="effectiveSteps"
+            :disabled="aiGen.isGenerating.value"
+            @change="clampSteps(($event.target as HTMLInputElement).value)"
+          />
+        </div>
       </div>
 
-      <!-- Guidance -->
-      <div v-if="(aiGen.selectedModel.value?.defaultGuidance ?? 0) > 0" class="field-row">
-        <div class="field-label">引导强度</div>
-        <div class="field-hint">{{ effectiveGuidance.toFixed(1) }}</div>
+      <!-- CFG Guidance -->
+      <div v-if="(aiGen.selectedModel.value?.defaultGuidance ?? 0) > 0" class="adv-row">
+        <label class="adv-label">
+          {{ t('aiGen.sections.guidance') }}
+          <span class="adv-hint">{{ t('aiGen.sections.guidanceHint') }}</span>
+        </label>
+        <div class="adv-control">
+          <input
+            type="range"
+            class="range-input"
+            min="1" max="15" step="0.5"
+            :value="effectiveGuidance"
+            :disabled="aiGen.isGenerating.value"
+            @input="customGuidance = Number(($event.target as HTMLInputElement).value)"
+          />
+          <input
+            type="number"
+            class="adv-num-input"
+            min="1" max="15" step="0.5"
+            :value="effectiveGuidance"
+            :disabled="aiGen.isGenerating.value"
+            @change="clampGuidance(($event.target as HTMLInputElement).value)"
+          />
+        </div>
       </div>
-      <input
-        v-if="(aiGen.selectedModel.value?.defaultGuidance ?? 0) > 0"
-        type="range"
-        class="range-input"
-        min="1" max="15" step="0.5"
-        :value="effectiveGuidance"
-        :disabled="aiGen.isGenerating.value"
-        @input="customGuidance = Number(($event.target as HTMLInputElement).value)"
-      />
+
+      <!-- Resolution -->
+      <div class="adv-row adv-row--res">
+        <label class="adv-label">
+          {{ t('aiGen.sections.resolution') }}
+        </label>
+        <div class="adv-res-row">
+          <!-- Quick presets -->
+          <div class="res-presets">
+            <button
+              v-for="r in resolutionOptions"
+              :key="r"
+              class="res-preset-btn"
+              :class="{ 'res-preset-btn--active': effectiveWidth === r && effectiveHeight === r }"
+              :disabled="aiGen.isGenerating.value"
+              @click="customWidth = r; customHeight = r"
+            >{{ r }}</button>
+          </div>
+          <!-- W × H inputs -->
+          <div class="res-inputs">
+            <input
+              type="number"
+              class="adv-num-input adv-num-input--res"
+              min="256" max="1024" step="64"
+              :value="effectiveWidth"
+              :disabled="aiGen.isGenerating.value"
+              @change="customWidth = Math.round(Number(($event.target as HTMLInputElement).value) / 64) * 64"
+            />
+            <span class="res-x">×</span>
+            <input
+              type="number"
+              class="adv-num-input adv-num-input--res"
+              min="256" max="1024" step="64"
+              :value="effectiveHeight"
+              :disabled="aiGen.isGenerating.value"
+              @change="customHeight = Math.round(Number(($event.target as HTMLInputElement).value) / 64) * 64"
+            />
+          </div>
+        </div>
+      </div>
 
       <!-- Seed -->
-      <div class="field-label">随机种子</div>
-      <div class="seed-row">
-        <label class="toggle-label">
-          <input type="checkbox" v-model="randomSeed" class="toggle-check" />
-          <span>随机</span>
+      <div class="adv-row">
+        <label class="adv-label">
+          {{ t('aiGen.sections.seed') }}
         </label>
-        <input
-          v-if="!randomSeed"
-          type="number"
-          class="seed-input"
-          v-model.number="seed"
-          placeholder="输入种子值"
-          :disabled="aiGen.isGenerating.value"
-        />
+        <div class="seed-row">
+          <label class="toggle-label">
+            <input type="checkbox" v-model="randomSeed" class="toggle-check" :disabled="aiGen.isGenerating.value" />
+            <span>{{ t('common.random') }}</span>
+          </label>
+          <input
+            v-if="!randomSeed"
+            type="number"
+            class="adv-num-input seed-num"
+            v-model.number="seed"
+            :placeholder="t('aiGen.seedPlaceholder')"
+            :disabled="aiGen.isGenerating.value"
+          />
+        </div>
       </div>
+
     </div>
 
     <!-- ── Generate button ────────────────────────────────────────────── -->
@@ -312,7 +442,7 @@ function handleSelectModel(id: string) {
       <template v-if="aiGen.isGenerating.value">
         <!-- Step progress inside the button -->
         <span class="gen-progress-text">
-          生成中 {{ aiGen.stepProgress.value?.step ?? 0 }} / {{ aiGen.stepProgress.value?.totalSteps ?? effectiveSteps }} 步
+          {{ t('aiGen.actions.generateProgress', { step: aiGen.stepProgress.value?.step ?? 0, total: aiGen.stepProgress.value?.totalSteps ?? effectiveSteps }) }}
         </span>
         <div class="gen-progress-bar">
           <div class="gen-progress-bar__fill" :style="{ width: `${aiGen.stepPercentage.value}%` }" />
@@ -322,22 +452,22 @@ function handleSelectModel(id: string) {
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
         </svg>
-        请先下载模型
+        {{ t('aiGen.actions.downloadModelFirst') }}
       </template>
       <template v-else-if="!prompt.trim()">
-        输入提示词后生成
+        {{ t('aiGen.actions.enterPromptFirst') }}
       </template>
       <template v-else>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polygon points="5 3 19 12 5 21 5 3"/>
         </svg>
-        生成 Logo
+        {{ t('aiGen.actions.generate') }}
       </template>
     </button>
 
-    <!-- CPU warning -->
-    <p v-if="aiGen.device.value && !aiGen.device.value.isAccelerated" class="cpu-warning">
-      当前为 CPU 模式，生成约需 2–5 分钟，请耐心等待
+    <!-- CPU warning (hide if we're already showing the GPU-hint badge) -->
+    <p v-if="aiGen.device.value && !aiGen.device.value.isAccelerated && !aiGen.device.value.gpuAvailableButDisabled" class="cpu-warning">
+      {{ t('aiGen.cpuWarning') }}
     </p>
 
   </div>
@@ -349,6 +479,14 @@ function handleSelectModel(id: string) {
   flex-direction: column;
   gap: var(--space-3);
   padding-bottom: var(--space-4);
+}
+
+/* ── Device row ───────────────────────────────────────────────────── */
+.device-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 /* ── Device badge ─────────────────────────────────────────────────── */
@@ -380,6 +518,44 @@ function handleSelectModel(id: string) {
 .device-badge.cuda .device-badge__dot {
   background: var(--accent);
   box-shadow: 0 0 4px var(--accent-glow);
+}
+.device-badge.metal .device-badge__dot {
+  background: #f97316;
+  box-shadow: 0 0 4px rgba(249, 115, 22, 0.5);
+}
+.device-badge.metal {
+  border-color: rgba(249, 115, 22, 0.4);
+  color: #f97316;
+}
+
+/* GPU hint badge — shown when GPU detected but feature not compiled in */
+.gpu-hint-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(234, 179, 8, 0.1);
+  border: 1px solid rgba(234, 179, 8, 0.35);
+  color: #ca8a04;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+  transition: background var(--transition-fast);
+}
+.gpu-hint-badge:hover {
+  background: rgba(234, 179, 8, 0.2);
+}
+.gpu-hint-cmd {
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  background: rgba(234, 179, 8, 0.15);
+  border-radius: 3px;
+  border: 1px solid rgba(234, 179, 8, 0.3);
+  white-space: nowrap;
 }
 
 /* ── Section label ────────────────────────────────────────────────── */
@@ -548,68 +724,159 @@ function handleSelectModel(id: string) {
 }
 .prompt-input:focus { border-color: var(--accent); }
 .prompt-input:disabled { opacity: 0.5; cursor: not-allowed; }
-.prompt-input--neg { color: var(--text-secondary); }
+.prompt-input--neg {
+  color: var(--text-secondary);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+.prompt-input--neg:focus { border-color: rgba(239, 68, 68, 0.5); }
 
-/* ── Advanced settings ─────────────────────────────────────────────── */
-.neg-prompt-toggle {
+/* section label with inline hint */
+.section-label--neg {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.label-hint {
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--text-disabled);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* ── Advanced settings toggle ──────────────────────────────────────── */
+.advanced-toggle {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
   font-size: var(--text-xs);
   color: var(--text-tertiary);
   cursor: pointer;
   padding: 2px 0;
   user-select: none;
 }
-.neg-prompt-toggle:hover { color: var(--text-secondary); }
+.advanced-toggle:hover { color: var(--text-secondary); }
+/* push chevron to the right */
+.advanced-toggle > svg:last-child { margin-left: auto; }
 
+/* ── Advanced settings panel ───────────────────────────────────────── */
 .advanced-wrap {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
   padding: var(--space-3);
   background: var(--bg-input);
   border-radius: var(--radius-md);
   border: 1px solid var(--border);
 }
 
-.field-label {
+/* each param row */
+.adv-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.adv-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-tertiary);
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.field-hint {
-  font-size: 10px;
+.adv-hint {
+  font-size: 9px;
+  font-weight: 400;
   color: var(--text-disabled);
-}
-.field-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  text-transform: none;
+  letter-spacing: 0;
 }
 
-.range-input {
-  width: 100%;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-.range-input:disabled { opacity: 0.4; cursor: not-allowed; }
-
-.steps-row {
+/* slider + number input side by side */
+.adv-control {
   display: flex;
   align-items: center;
   gap: var(--space-2);
 }
-.steps-val {
-  font-size: var(--text-sm);
-  font-weight: 600;
+
+.range-input {
+  flex: 1;
+  accent-color: var(--accent);
+  cursor: pointer;
+  min-width: 0;
+}
+.range-input:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* compact editable number box */
+.adv-num-input {
+  width: 52px;
+  flex-shrink: 0;
+  padding: 3px 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   color: var(--accent-hover);
-  min-width: 24px;
-  text-align: right;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-align: center;
+  outline: none;
+  transition: border-color var(--transition-fast);
+  /* hide number spinners */
+  -moz-appearance: textfield;
+}
+.adv-num-input::-webkit-inner-spin-button,
+.adv-num-input::-webkit-outer-spin-button { -webkit-appearance: none; }
+.adv-num-input:focus { border-color: var(--accent); }
+.adv-num-input:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* resolution inputs */
+.adv-res-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.res-presets {
+  display: flex;
+  gap: 4px;
+}
+.res-preset-btn {
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.res-preset-btn:hover:not(:disabled) {
+  border-color: rgba(99,102,241,0.4);
+  color: var(--accent-hover);
+}
+.res-preset-btn--active {
+  background: rgba(99,102,241,0.12);
+  border-color: var(--accent);
+  color: var(--accent-hover);
+}
+.res-preset-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.res-inputs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.adv-num-input--res {
+  width: 62px;
+}
+.res-x {
+  font-size: var(--text-xs);
+  color: var(--text-disabled);
 }
 
+/* seed row */
 .seed-row {
   display: flex;
   align-items: center;
@@ -625,17 +892,10 @@ function handleSelectModel(id: string) {
   white-space: nowrap;
 }
 .toggle-check { accent-color: var(--accent); cursor: pointer; }
-.seed-input {
-  flex: 1;
-  padding: 4px 8px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-size: var(--text-xs);
-  outline: none;
+.seed-num {
+  width: 100px;
+  text-align: left;
 }
-.seed-input:focus { border-color: var(--accent); }
 
 /* ── Generate button ──────────────────────────────────────────────── */
 .btn-generate {

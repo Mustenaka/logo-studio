@@ -4,11 +4,11 @@
 /// for the base weights). LoRA files that require a token are clearly noted.
 ///
 /// File layout on disk (per model_id):
-///   tokenizer/tokenizer.json
-///   text_encoder/model.safetensors
-///   unet/diffusion_pytorch_model.safetensors
-///   vae/diffusion_pytorch_model.safetensors
-///   lora.safetensors   (optional)
+///   tokenizer.json                            ← from openai/clip-vit-large-patch14
+///   text_encoder/model.safetensors            ← from hf_repo
+///   unet/diffusion_pytorch_model.safetensors  ← from hf_repo
+///   vae/diffusion_pytorch_model.safetensors   ← from hf_repo
+///   lora.safetensors                          ← optional, from lora.hf_repo
 
 use serde::Serialize;
 
