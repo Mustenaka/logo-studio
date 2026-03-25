@@ -7,6 +7,11 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = []
+# Enable NVIDIA GPU acceleration (requires CUDA Toolkit installed)
+cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
@@ -28,3 +33,12 @@ base64 = "0.22"
 ort = { version = "2.0.0-rc.12", features = ["download-binaries", "ndarray"] }
 ndarray = "0.17"
 
+# ── AI image generation (Stable Diffusion via candle) ──────────────────────
+candle-core = "0.8"
+candle-nn = "0.8"
+candle-transformers = "0.8"
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+reqwest = { version = "0.12", features = ["stream", "json"] }
+tokio = { version = "1", features = ["sync"] }
+futures-util = "0.3"
+rand = "0.8"

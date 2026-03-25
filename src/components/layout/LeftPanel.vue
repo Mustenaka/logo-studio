@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useDropZone } from '@vueuse/core'
 import GlassCard from '../ui/GlassCard.vue'
+import AiGenPanel from '../ai-gen/AiGenPanel.vue'
 import { useCanvasStore } from '../../store/useCanvasStore'
 import { useTypographyStore } from '../../store/useTypographyStore'
 import { useImageEditor } from '../../modules/image-editor/useImageEditor'
@@ -14,7 +15,7 @@ const { imageThumbnail, textThumbnails } = useThumbnail()
 
 const dropZoneRef = ref<HTMLDivElement | null>(null)
 const isDragOver = ref(false)
-const activeTab = ref<'import' | 'layers'>('import')
+const activeTab = ref<'import' | 'layers' | 'ai'>('import')
 
 const { isOverDropZone } = useDropZone(dropZoneRef, {
   onOver: () => { isDragOver.value = true },
@@ -52,6 +53,9 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
         <span v-if="canvasStore.hasImage || typoStore.textLayers.length > 0" class="tab-count">
           {{ (canvasStore.hasImage ? 1 : 0) + typoStore.textLayers.length }}
         </span>
+      </button>
+      <button class="panel-tab panel-tab--ai" :class="{ active: activeTab === 'ai' }" @click="activeTab = 'ai'">
+        AI 生成
       </button>
     </div>
 
@@ -96,6 +100,11 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
           </svg>
         </button>
       </div>
+    </div>
+
+    <!-- ── AI Generation Tab ──────────────────────────────────────── -->
+    <div v-if="activeTab === 'ai'" class="tab-content">
+      <AiGenPanel />
     </div>
 
     <!-- ── Layers Tab ─────────────────────────────────────────────── -->
@@ -524,4 +533,10 @@ function getLayerStatusLabel(layer: typeof canvasStore.imageLayer): string {
 }
 .layer-action-btn:hover { color: var(--text-primary); background: var(--bg-button-hover); }
 .layer-action-btn--danger:hover { color: var(--danger); background: rgba(239,68,68,0.1); }
+
+/* AI tab accent */
+.panel-tab--ai.active {
+  background: rgba(99,102,241,0.15);
+  color: var(--accent-hover);
+}
 </style>
