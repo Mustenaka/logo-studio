@@ -10,6 +10,14 @@ A cross-platform desktop logo design tool with offline AI-powered background rem
 
 Logo Studio Desktop provides a local-first, privacy-preserving workflow for designing logos and generating multi-platform icon sets. The core feature is **SAM2 ONNX** inference running entirely on-device (CPU), with a multi-stage classical fallback for environments where the model is unavailable.
 
+![main](./docs/pic/main.png)
+
+Output like:
+
+![sample1](./docs/pic/sample1.png)
+
+![sample2](./docs/pic/sample2.png)
+
 ---
 
 ## Tech Stack

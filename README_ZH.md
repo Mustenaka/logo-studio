@@ -10,6 +10,12 @@
 
 Logo Studio Desktop 采用本地优先、数据不出本机的设计理念，为 Logo 设计和多平台图标导出提供完整工作流。核心能力是 **SAM2 ONNX** 本地 CPU 推理抠图，无需联网、无需 Python 运行时，并在模型不可用时自动降级到多阶段经典算法。
 
+![main](D:/Work/Code/Cross/logo-studio-desktop/logo-studio/docs/pic/main.png)设计结果输出（可带符合移动端审美的背景混色模板):
+
+![sample1](D:/Work/Code/Cross/logo-studio-desktop/logo-studio/docs/pic/sample1.png)
+
+![sample2](./docs/pic/sample2.png)
+
 ---
 
 ## 技术栈
