@@ -1,0 +1,32 @@
+{
+  "app": {
+    "title": "Logo Studio",
+    "tagline": "Professional Logo Design Tool"
+  },
+  "panel": {
+    "import": "Import",
+    "layers": "Layers",
+    "background": "Background",
+    "image": "Image",
+    "typography": "Text",
+    "export": "Export"
+  },
+  "import": {
+    "dropHint": "Drop image here",
+    "clickHint": "or click to browse",
+    "formats": "PNG · JPG · WebP · SVG"
+  },
+  "segment": {
+    "auto": "Auto Segment",
+    "point": "Click Select",
+    "processing": "Processing...",
+    "clearMask": "Clear Mask",
+    "confirm": "Confirm Segment"
+  },
+  "export": {
+    "title": "Export Settings",
+    "size": "Export Size",
+    "format": "Format",
+    "canvasSize": "Canvas Size"
+  }
+}

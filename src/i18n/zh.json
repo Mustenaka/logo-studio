@@ -1,0 +1,32 @@
+{
+  "app": {
+    "title": "Logo Studio",
+    "tagline": "专业 Logo 设计工具"
+  },
+  "panel": {
+    "import": "导入",
+    "layers": "图层",
+    "background": "背景",
+    "image": "图像",
+    "typography": "文字",
+    "export": "导出"
+  },
+  "import": {
+    "dropHint": "拖拽图片到此处",
+    "clickHint": "或点击选择文件",
+    "formats": "PNG · JPG · WebP · SVG"
+  },
+  "segment": {
+    "auto": "一键抠图",
+    "point": "点击选区",
+    "processing": "处理中...",
+    "clearMask": "清除蒙版",
+    "confirm": "确认抠图"
+  },
+  "export": {
+    "title": "导出设置",
+    "size": "导出尺寸",
+    "format": "格式",
+    "canvasSize": "画布尺寸"
+  }
+}
