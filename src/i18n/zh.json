@@ -214,11 +214,23 @@
       "negativePrompt": "负面提示词",
       "steps": "步数",
       "stepsHint": "CPU 建议 ≤ 20",
-      "guidance": "引导强度 (CFG)",
-      "guidanceHint": "越高越贴近提示词",
+      "guidance": "CFG Scale",
+      "guidanceHint": "越高越贴近提示词（SDXL Turbo 固定为 0）",
       "resolution": "分辨率",
       "negativePromptHint": "描述不想出现的内容",
-      "seed": "种子"
+      "seed": "种子",
+      "sampler": "采样器",
+      "samplerHint": "DDIM 更稳定，Euler A 更多样",
+      "hiresFix": "Hires Fix",
+      "hiresFixHint": "先低分辨率生成，再放大重绘，提升细节",
+      "hiresTargetRes": "目标分辨率",
+      "hiresStrength": "重绘强度",
+      "hiresStrengthHint": "越高改动越大（推荐 0.4–0.6）",
+      "hiresSteps": "重绘步数"
+    },
+    "sampler": {
+      "ddim": "DDIM（确定性）",
+      "eulerA": "Euler Ancestral（随机）"
     },
     "models": {
       "downloaded": "已下载",

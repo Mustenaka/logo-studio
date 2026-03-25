@@ -19,6 +19,14 @@ const customWidth = ref<number>(256)
 const customHeight = ref<number>(256)
 const seed = ref<number | null>(null)
 const randomSeed = ref(true)
+// Sampler
+const sampler = ref<'ddim' | 'euler_a'>('ddim')
+// Hires Fix
+const hiresFixEnabled = ref(false)
+const hiresFixWidth = ref<number>(512)
+const hiresFixHeight = ref<number>(512)
+const hiresFixStrength = ref<number>(0.5)
+const hiresFixSteps = ref<number>(20)
 
 // Token input state
 const tokenInput = ref('')
@@ -91,8 +99,22 @@ async function handleGenerate() {
     width: customWidth.value,
     height: customHeight.value,
     seed: randomSeed.value ? null : seed.value,
+    sampler: sampler.value,
+    hiresFixEnabled: hiresFixEnabled.value,
+    hiresFixWidth: hiresFixEnabled.value ? hiresFixWidth.value : undefined,
+    hiresFixHeight: hiresFixEnabled.value ? hiresFixHeight.value : undefined,
+    hiresFixStrength: hiresFixEnabled.value ? hiresFixStrength.value : undefined,
+    hiresFixSteps: hiresFixEnabled.value ? hiresFixSteps.value : undefined,
   })
 }
+
+// Watch base resolution: keep hires defaults at 2× when user changes base
+watch([customWidth, customHeight], ([w, h]) => {
+  const model = aiGen.selectedModel.value
+  const maxRes = model?.maxResolution ?? 1024
+  hiresFixWidth.value  = Math.min(w * 2, maxRes)
+  hiresFixHeight.value = Math.min(h * 2, maxRes)
+})
 
 function clampSteps(val: string) {
   const n = parseInt(val, 10)
@@ -315,6 +337,28 @@ function handleSelectModel(id: string) {
 
     <div v-if="showAdvanced" class="advanced-wrap">
 
+      <!-- Sampler -->
+      <div class="adv-row">
+        <label class="adv-label">
+          {{ t('aiGen.sections.sampler') }}
+          <span class="adv-hint">{{ t('aiGen.sections.samplerHint') }}</span>
+        </label>
+        <div class="sampler-group">
+          <button
+            class="sampler-btn"
+            :class="{ 'sampler-btn--active': sampler === 'ddim' }"
+            :disabled="aiGen.isGenerating.value"
+            @click="sampler = 'ddim'"
+          >{{ t('aiGen.sampler.ddim') }}</button>
+          <button
+            class="sampler-btn"
+            :class="{ 'sampler-btn--active': sampler === 'euler_a' }"
+            :disabled="aiGen.isGenerating.value"
+            @click="sampler = 'euler_a'"
+          >{{ t('aiGen.sampler.eulerA') }}</button>
+        </div>
+      </div>
+
       <!-- Steps -->
       <div class="adv-row">
         <label class="adv-label">
@@ -427,6 +471,100 @@ function handleSelectModel(id: string) {
             :placeholder="t('aiGen.seedPlaceholder')"
             :disabled="aiGen.isGenerating.value"
           />
+        </div>
+      </div>
+
+      <!-- ── Hires Fix ──────────────────────────────────────────────── -->
+      <div class="adv-row">
+        <div class="hires-header">
+          <label class="adv-label" style="margin:0">
+            {{ t('aiGen.sections.hiresFix') }}
+            <span class="adv-hint">{{ t('aiGen.sections.hiresFixHint') }}</span>
+          </label>
+          <label class="toggle-label">
+            <input
+              type="checkbox"
+              v-model="hiresFixEnabled"
+              class="toggle-check"
+              :disabled="aiGen.isGenerating.value"
+            />
+            <span>{{ hiresFixEnabled ? t('common.on') : t('common.off') }}</span>
+          </label>
+        </div>
+
+        <div v-if="hiresFixEnabled" class="hires-body">
+          <!-- Target resolution -->
+          <div class="hires-field">
+            <span class="hires-field-label">{{ t('aiGen.sections.hiresTargetRes') }}</span>
+            <div class="res-inputs">
+              <input
+                type="number"
+                class="adv-num-input adv-num-input--res"
+                min="256" :max="aiGen.selectedModel.value?.maxResolution ?? 2048" step="64"
+                :value="hiresFixWidth"
+                :disabled="aiGen.isGenerating.value"
+                @change="hiresFixWidth = Math.round(Number(($event.target as HTMLInputElement).value) / 64) * 64"
+              />
+              <span class="res-x">×</span>
+              <input
+                type="number"
+                class="adv-num-input adv-num-input--res"
+                min="256" :max="aiGen.selectedModel.value?.maxResolution ?? 2048" step="64"
+                :value="hiresFixHeight"
+                :disabled="aiGen.isGenerating.value"
+                @change="hiresFixHeight = Math.round(Number(($event.target as HTMLInputElement).value) / 64) * 64"
+              />
+            </div>
+          </div>
+
+          <!-- Denoising strength -->
+          <div class="hires-field">
+            <span class="hires-field-label">
+              {{ t('aiGen.sections.hiresStrength') }}
+              <span class="adv-hint">{{ t('aiGen.sections.hiresStrengthHint') }}</span>
+            </span>
+            <div class="adv-control">
+              <input
+                type="range"
+                class="range-input"
+                min="0.1" max="0.9" step="0.05"
+                :value="hiresFixStrength"
+                :disabled="aiGen.isGenerating.value"
+                @input="hiresFixStrength = Number(($event.target as HTMLInputElement).value)"
+              />
+              <input
+                type="number"
+                class="adv-num-input"
+                min="0.1" max="0.9" step="0.05"
+                :value="hiresFixStrength"
+                :disabled="aiGen.isGenerating.value"
+                @change="hiresFixStrength = Math.min(0.9, Math.max(0.1, Number(($event.target as HTMLInputElement).value)))"
+              />
+            </div>
+          </div>
+
+          <!-- Hires steps -->
+          <div class="hires-field">
+            <span class="hires-field-label">{{ t('aiGen.sections.hiresSteps') }}</span>
+            <div class="adv-control">
+              <input
+                type="range"
+                class="range-input"
+                min="5" max="50" step="1"
+                :value="hiresFixSteps"
+                :disabled="aiGen.isGenerating.value"
+                @input="hiresFixSteps = Number(($event.target as HTMLInputElement).value)"
+              />
+              <input
+                type="number"
+                class="adv-num-input"
+                min="5" max="50"
+                :value="hiresFixSteps"
+                :disabled="aiGen.isGenerating.value"
+                @change="hiresFixSteps = Math.min(50, Math.max(5, Number(($event.target as HTMLInputElement).value)))"
+              />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1132,5 +1270,67 @@ function handleSelectModel(id: string) {
 .expand-leave-to {
   max-height: 0;
   opacity: 0;
+}
+
+/* ── Sampler toggle group ─────────────────────────────────────────── */
+.sampler-group {
+  display: flex;
+  gap: 4px;
+}
+.sampler-btn {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+  white-space: nowrap;
+  text-align: center;
+}
+.sampler-btn:hover:not(:disabled) {
+  border-color: rgba(99,102,241,0.4);
+  color: var(--accent-hover);
+}
+.sampler-btn--active {
+  background: rgba(99,102,241,0.12);
+  border-color: var(--accent);
+  color: var(--accent-hover);
+}
+.sampler-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Hires Fix ────────────────────────────────────────────────────── */
+.hires-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.hires-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: rgba(99,102,241,0.04);
+  border: 1px solid rgba(99,102,241,0.15);
+  border-radius: var(--radius-sm);
+}
+.hires-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.hires-field-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 </style>

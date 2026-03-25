@@ -215,10 +215,22 @@
       "steps": "Steps",
       "stepsHint": "CPU recommended ≤ 20",
       "guidance": "CFG Scale",
-      "guidanceHint": "Higher = stronger prompt adherence",
+      "guidanceHint": "Higher = stronger prompt adherence (fixed 0 for SDXL Turbo)",
       "resolution": "Resolution",
       "negativePromptHint": "what to avoid",
-      "seed": "Seed"
+      "seed": "Seed",
+      "sampler": "Sampler",
+      "samplerHint": "DDIM is stable & reproducible; Euler A adds variety",
+      "hiresFix": "Hires Fix",
+      "hiresFixHint": "Generate at base res, then upscale & re-denoise for sharper detail",
+      "hiresTargetRes": "Target Resolution",
+      "hiresStrength": "Denoising Strength",
+      "hiresStrengthHint": "How much to re-draw (recommended 0.4–0.6)",
+      "hiresSteps": "Steps"
+    },
+    "sampler": {
+      "ddim": "DDIM (Deterministic)",
+      "eulerA": "Euler Ancestral (Stochastic)"
     },
     "models": {
       "downloaded": "Downloaded",

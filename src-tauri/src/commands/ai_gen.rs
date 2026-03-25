@@ -8,7 +8,6 @@
 ///   ai_gen_get_hf_token   — read stored HF access token (masked)
 ///   ai_gen_set_hf_token   — save HF access token to disk
 ///   ai_gen_delete_hf_token — remove stored token
-
 use base64::{engine::general_purpose, Engine as _};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -16,11 +15,11 @@ use tauri::{AppHandle, Emitter};
 use crate::ai_gen::{
     device::{detect_device, DeviceInfo},
     downloader::{
-        delete_hf_token, download_model, get_paths, is_downloaded, load_hf_token,
-        save_hf_token, DownloadError,
+        delete_hf_token, download_model, get_paths, is_downloaded, load_hf_token, save_hf_token,
+        DownloadError,
     },
     model_registry::{catalog, find, ModelDef},
-    pipeline::run_pipeline,
+    pipeline::{run_pipeline, HiresFixParams, Sampler},
 };
 
 // ── Response types ────────────────────────────────────────────────────────────
@@ -66,7 +65,7 @@ pub struct GenerateResult {
 #[serde(rename_all = "camelCase")]
 pub struct DownloadResult {
     pub success: bool,
-    pub error_kind: Option<String>,   // "auth_required" | "not_found" | "error"
+    pub error_kind: Option<String>, // "auth_required" | "not_found" | "error"
     pub error_message: Option<String>,
     pub error_url: Option<String>,
 }
@@ -100,18 +99,17 @@ pub fn ai_gen_list_models() -> Vec<ModelStatus> {
 /// Returns a `DownloadResult` instead of `Result<(), String>` so the frontend
 /// can distinguish auth errors from other failures without parsing strings.
 #[tauri::command]
-pub async fn ai_gen_download(
-    app: AppHandle,
-    model_id: String,
-) -> DownloadResult {
+pub async fn ai_gen_download(app: AppHandle, model_id: String) -> DownloadResult {
     let def = match find(&model_id) {
         Some(d) => d,
-        None => return DownloadResult {
-            success: false,
-            error_kind: Some("error".into()),
-            error_message: Some(format!("Unknown model id: {model_id}")),
-            error_url: None,
-        },
+        None => {
+            return DownloadResult {
+                success: false,
+                error_kind: Some("error".into()),
+                error_message: Some(format!("Unknown model id: {model_id}")),
+                error_url: None,
+            }
+        }
     };
 
     match download_model(&app, def).await {
@@ -153,8 +151,37 @@ pub async fn ai_gen_generate(
     width: Option<u32>,
     height: Option<u32>,
     seed: Option<u64>,
+    // "ddim" | "euler_a" (default: "ddim")
+    sampler: Option<String>,
+    hires_fix_enabled: Option<bool>,
+    // Target width for Hires Fix (pixels, multiple of 8)
+    hires_fix_width: Option<u32>,
+    // Target height for Hires Fix (pixels, multiple of 8)
+    hires_fix_height: Option<u32>,
+    // Re-denoise strength 0-1 (default 0.5)
+    hires_fix_strength: Option<f32>,
+    // UNet steps for Hires Fix pass (default 20)
+    hires_fix_steps: Option<u32>,
 ) -> GenerateResult {
-    match run_generate(app, model_id.clone(), prompt, negative_prompt, steps, guidance, width, height, seed).await {
+    match run_generate(
+        app,
+        model_id.clone(),
+        prompt,
+        negative_prompt,
+        steps,
+        guidance,
+        width,
+        height,
+        seed,
+        sampler,
+        hires_fix_enabled,
+        hires_fix_width,
+        hires_fix_height,
+        hires_fix_strength,
+        hires_fix_steps,
+    )
+    .await
+    {
         Ok((image_b64, device_kind, steps_taken)) => GenerateResult {
             success: true,
             image: Some(image_b64),
@@ -178,11 +205,20 @@ pub async fn ai_gen_generate(
 #[tauri::command]
 pub fn ai_gen_get_hf_token() -> HfTokenStatus {
     match load_hf_token() {
-        None => HfTokenStatus { has_token: false, masked: None },
+        None => HfTokenStatus {
+            has_token: false,
+            masked: None,
+        },
         Some(token) => {
             // Show prefix + last 4 chars: "hf_••••••••••ABCD"
-            let suffix: String = token.chars().rev().take(4).collect::<String>()
-                .chars().rev().collect();
+            let suffix: String = token
+                .chars()
+                .rev()
+                .take(4)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect();
             let stars = "•".repeat(token.len().saturating_sub(4).min(16));
             let prefix = if token.starts_with("hf_") { "hf_" } else { "" };
             HfTokenStatus {
@@ -220,12 +256,16 @@ async fn run_generate(
     width: Option<u32>,
     height: Option<u32>,
     seed: Option<u64>,
+    sampler: Option<String>,
+    hires_fix_enabled: Option<bool>,
+    hires_fix_width: Option<u32>,
+    hires_fix_height: Option<u32>,
+    hires_fix_strength: Option<f32>,
+    hires_fix_steps: Option<u32>,
 ) -> Result<(String, String, u32), String> {
-    let def = find(&model_id)
-        .ok_or_else(|| format!("Unknown model id: {model_id}"))?;
+    let def = find(&model_id).ok_or_else(|| format!("Unknown model id: {model_id}"))?;
 
-    let paths = get_paths(def)
-        .ok_or_else(|| format!("模型 '{model_id}' 尚未下载"))?;
+    let paths = get_paths(def).ok_or_else(|| format!("模型 '{model_id}' 尚未下载"))?;
 
     let (device, dev_info) = detect_device();
     let device_kind = dev_info.kind.clone();
@@ -257,34 +297,73 @@ async fn run_generate(
         "blurry, low quality, watermark, signature, text, ugly, deformed".into()
     });
 
+    let chosen_sampler = match sampler.as_deref() {
+        Some("euler_a") => Sampler::EulerA,
+        _ => Sampler::Ddim,
+    };
+
+    // Build HiresFixParams if enabled
+    let hires_fix = if hires_fix_enabled.unwrap_or(false) {
+        let hf_w = (hires_fix_width.unwrap_or(img_w as u32 * 2) as usize)
+            .min(def.max_resolution as usize)
+            .next_multiple_of(8)
+            .max(8);
+        let hf_h = (hires_fix_height.unwrap_or(img_h as u32 * 2) as usize)
+            .min(def.max_resolution as usize)
+            .next_multiple_of(8)
+            .max(8);
+        Some(HiresFixParams {
+            width: hf_w,
+            height: hf_h,
+            denoising_strength: hires_fix_strength.unwrap_or(0.5) as f64,
+            steps: hires_fix_steps.unwrap_or(20) as usize,
+        })
+    } else {
+        None
+    };
+
     let lora = def.lora.clone();
     let model_base = def.base.clone();
     let app_clone = app.clone();
     let mid = model_id.clone();
 
     let png_bytes = tokio::task::spawn_blocking(move || {
-        run_pipeline(&paths, &crate::ai_gen::pipeline::GenerateParams {
-            model_base,
-            prompt: full_prompt,
-            negative_prompt: neg,
-            steps: n_steps,
-            guidance_scale,
-            width: img_w,
-            height: img_h,
-            seed,
-            lora,
-        }, &device, |step, total| {
-            let _ = app_clone.emit("ai-gen:step-progress", serde_json::json!({
-                "modelId": mid,
-                "step": step,
-                "totalSteps": total,
-            }));
-        })
+        run_pipeline(
+            &paths,
+            &crate::ai_gen::pipeline::GenerateParams {
+                model_base,
+                prompt: full_prompt,
+                negative_prompt: neg,
+                steps: n_steps,
+                guidance_scale,
+                width: img_w,
+                height: img_h,
+                seed,
+                lora,
+                sampler: chosen_sampler,
+                hires_fix,
+            },
+            &device,
+            |step, total| {
+                let _ = app_clone.emit(
+                    "ai-gen:step-progress",
+                    serde_json::json!({
+                        "modelId": mid,
+                        "step": step,
+                        "totalSteps": total,
+                    }),
+                );
+            },
+        )
     })
     .await
     .map_err(|e| format!("推理线程错误: {e}"))??;
 
-    Ok((general_purpose::STANDARD.encode(&png_bytes), device_kind, n_steps as u32))
+    Ok((
+        general_purpose::STANDARD.encode(&png_bytes),
+        device_kind,
+        n_steps as u32,
+    ))
 }
 
 fn model_to_status(def: &ModelDef) -> ModelStatus {
@@ -293,7 +372,10 @@ fn model_to_status(def: &ModelDef) -> ModelStatus {
         id: def.id,
         name: def.name,
         description: def.description,
-        base: match def.base { ModelBase::Sd15 => "sd15".into(), ModelBase::SdXl => "sdxl".into() },
+        base: match def.base {
+            ModelBase::Sd15 => "sd15".into(),
+            ModelBase::SdXl => "sdxl".into(),
+        },
         size_mb: def.size_mb,
         min_ram_mb: def.min_ram_mb,
         default_steps_cpu: def.default_steps_cpu,
@@ -303,8 +385,7 @@ fn model_to_status(def: &ModelDef) -> ModelStatus {
         example_prompt: def.example_prompt,
         has_lora: def.lora.is_some(),
         lora_trigger_word: def.lora.as_ref().and_then(|l| l.trigger_word),
-        requires_token: def.requires_token
-            || def.lora.as_ref().map_or(false, |l| l.requires_token),
+        requires_token: def.requires_token || def.lora.as_ref().map_or(false, |l| l.requires_token),
         is_downloaded: is_downloaded(def),
     }
 }

@@ -23,18 +23,14 @@ pub fn export_icon_set(
 ) -> Result<usize, String> {
     // Decode source image
     let b64 = if data_url.starts_with("data:") {
-        data_url
-            .split(',')
-            .nth(1)
-            .ok_or("Invalid data URL")?
+        data_url.split(',').nth(1).ok_or("Invalid data URL")?
     } else {
         &data_url
     };
     let bytes = general_purpose::STANDARD
         .decode(b64)
         .map_err(|e| format!("Base64 decode: {e}"))?;
-    let src = image::load_from_memory(&bytes)
-        .map_err(|e| format!("Image decode: {e}"))?;
+    let src = image::load_from_memory(&bytes).map_err(|e| format!("Image decode: {e}"))?;
 
     let out_root = Path::new(&output_dir);
 
@@ -43,8 +39,7 @@ pub fn export_icon_set(
 
         // Create parent directories
         if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Create dir {:?}: {e}", parent))?;
+            std::fs::create_dir_all(parent).map_err(|e| format!("Create dir {:?}: {e}", parent))?;
         }
 
         let resized = src.resize_exact(entry.size, entry.size, FilterType::Lanczos3);

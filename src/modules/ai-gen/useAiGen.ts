@@ -83,6 +83,18 @@ export interface GenerateOptions {
   width?: number
   height?: number
   seed?: number | null
+  /** Sampling algorithm: "ddim" | "euler_a" */
+  sampler?: string
+  /** Enable Hires Fix second pass */
+  hiresFixEnabled?: boolean
+  /** Hires Fix target width (px, multiple of 8) */
+  hiresFixWidth?: number
+  /** Hires Fix target height (px, multiple of 8) */
+  hiresFixHeight?: number
+  /** Hires Fix denoising strength 0–1 */
+  hiresFixStrength?: number
+  /** Hires Fix UNet steps */
+  hiresFixSteps?: number
 }
 
 // ── Composable ────────────────────────────────────────────────────────────────
@@ -226,6 +238,12 @@ export function useAiGen() {
         width: opts.width ?? null,
         height: opts.height ?? null,
         seed: opts.seed ?? null,
+        sampler: opts.sampler ?? null,
+        hiresFixEnabled: opts.hiresFixEnabled ?? false,
+        hiresFixWidth: opts.hiresFixWidth ?? null,
+        hiresFixHeight: opts.hiresFixHeight ?? null,
+        hiresFixStrength: opts.hiresFixStrength ?? null,
+        hiresFixSteps: opts.hiresFixSteps ?? null,
       })
 
       if (!result.success || !result.image) throw new Error(result.error ?? tr('aiGenModule.toast.generateFailed'))

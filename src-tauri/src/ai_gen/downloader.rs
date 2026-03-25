@@ -9,8 +9,7 @@
 ///   - AuthRequired  → 401/403: the file needs a HF token
 ///   - NotFound      → 404: wrong path or repo name
 ///   - Network       → other errors
-
-use crate::ai_gen::model_registry::ModelDef;
+use crate::ai_gen::model_registry::{ModelBase, ModelDef};
 use futures_util::StreamExt;
 use serde::Serialize;
 use std::io::Write as _;
@@ -22,7 +21,10 @@ use tauri::{AppHandle, Emitter};
 #[derive(Debug, Clone)]
 pub struct ModelPaths {
     pub tokenizer: PathBuf,
+    /// CLIP ViT-L/14 text encoder — 768-dim (all SD variants)
     pub clip_weights: PathBuf,
+    /// OpenCLIP ViT-bigG text encoder — 1280-dim (SDXL only; None for SD 1.5)
+    pub clip2_weights: Option<PathBuf>,
     pub unet_weights: PathBuf,
     pub vae_weights: PathBuf,
     pub lora_weights: Option<PathBuf>,
@@ -59,10 +61,16 @@ fn expected_paths(def: &ModelDef, dir: &Path) -> ModelPaths {
     ModelPaths {
         // tokenizer.json is fetched from openai/clip-vit-large-patch14, not the model repo.
         // SD model repos only ship vocab.json + merges.txt, not the compiled tokenizer.json.
-        tokenizer:    dir.join("tokenizer.json"),
+        tokenizer: dir.join("tokenizer.json"),
         clip_weights: dir.join("text_encoder/model.safetensors"),
+        // SDXL requires a second text encoder (OpenCLIP ViT-bigG, 1280-dim).
+        // Concatenated with clip_weights output → 2048-dim cross-attention input for the UNet.
+        clip2_weights: match def.base {
+            ModelBase::SdXl => Some(dir.join("text_encoder_2/model.safetensors")),
+            ModelBase::Sd15 => None,
+        },
         unet_weights: dir.join("unet/diffusion_pytorch_model.safetensors"),
-        vae_weights:  dir.join("vae/diffusion_pytorch_model.safetensors"),
+        vae_weights: dir.join("vae/diffusion_pytorch_model.safetensors"),
         lora_weights: def.lora.as_ref().map(|_| dir.join("lora.safetensors")),
     }
 }
@@ -72,16 +80,18 @@ pub fn is_downloaded(def: &ModelDef) -> bool {
     let p = expected_paths(def, &dir);
     p.tokenizer.exists()
         && p.clip_weights.exists()
+        && p.clip2_weights.as_ref().map_or(true, |p| p.exists())
         && p.unet_weights.exists()
         && p.vae_weights.exists()
-        && def
-            .lora
-            .as_ref()
-            .map_or(true, |_| p.lora_weights.as_ref().map_or(false, |l| l.exists()))
+        && def.lora.as_ref().map_or(true, |_| {
+            p.lora_weights.as_ref().map_or(false, |l| l.exists())
+        })
 }
 
 pub fn get_paths(def: &ModelDef) -> Option<ModelPaths> {
-    if !is_downloaded(def) { return None; }
+    if !is_downloaded(def) {
+        return None;
+    }
     Some(expected_paths(def, &model_dir(def.id)))
 }
 
@@ -100,10 +110,14 @@ fn token_path() -> PathBuf {
 ///   3. Token file at `<models_root>/hf_token`
 pub fn load_hf_token() -> Option<String> {
     if let Ok(t) = std::env::var("HUGGING_FACE_HUB_TOKEN") {
-        if !t.is_empty() { return Some(t.trim().to_string()); }
+        if !t.is_empty() {
+            return Some(t.trim().to_string());
+        }
     }
     if let Ok(t) = std::env::var("HF_TOKEN") {
-        if !t.is_empty() { return Some(t.trim().to_string()); }
+        if !t.is_empty() {
+            return Some(t.trim().to_string());
+        }
     }
     std::fs::read_to_string(token_path())
         .ok()
@@ -114,10 +128,8 @@ pub fn load_hf_token() -> Option<String> {
 /// Persist a HF access token to the token file.
 pub fn save_hf_token(token: &str) -> Result<(), String> {
     let root = models_root();
-    std::fs::create_dir_all(&root)
-        .map_err(|e| format!("Create models dir: {e}"))?;
-    std::fs::write(token_path(), token.trim())
-        .map_err(|e| format!("Save token: {e}"))
+    std::fs::create_dir_all(&root).map_err(|e| format!("Create models dir: {e}"))?;
+    std::fs::write(token_path(), token.trim()).map_err(|e| format!("Save token: {e}"))
 }
 
 /// Delete the stored token file.
@@ -147,7 +159,11 @@ pub struct DownloadProgress {
 #[derive(Debug)]
 pub enum DownloadError {
     /// HTTP 401 / 403 — needs a HF access token
-    AuthRequired { url: String, #[allow(dead_code)] model_id: String },
+    AuthRequired {
+        url: String,
+        #[allow(dead_code)]
+        model_id: String,
+    },
     /// HTTP 404 — file path or repo name is wrong
     NotFound { url: String },
     /// Any other error
@@ -179,7 +195,9 @@ impl DownloadError {
     pub fn to_string(&self) -> String {
         match self {
             DownloadError::AuthRequired { url, .. } => {
-                format!("需要 HuggingFace Token（401/403）\n地址: {url}\n请在 AI 生成设置中填入 Token")
+                format!(
+                    "需要 HuggingFace Token（401/403）\n地址: {url}\n请在 AI 生成设置中填入 Token"
+                )
             }
             DownloadError::NotFound { url } => {
                 format!("文件不存在（404）: {url}")
@@ -195,10 +213,7 @@ impl DownloadError {
 ///
 /// Files already present are skipped. Each chunk emits `"ai-gen:download-progress"`.
 /// Auth errors are returned as `Err(DownloadError::AuthRequired)`.
-pub async fn download_model(
-    app: &AppHandle,
-    def: &ModelDef,
-) -> Result<ModelPaths, DownloadError> {
+pub async fn download_model(app: &AppHandle, def: &ModelDef) -> Result<ModelPaths, DownloadError> {
     let dir = model_dir(def.id);
     std::fs::create_dir_all(&dir)
         .map_err(|e| DownloadError::Other(format!("Create model dir: {e}")))?;
@@ -207,11 +222,36 @@ pub async fn download_model(
     // The fast tokenizer is fetched from openai/clip-vit-large-patch14 which ships
     // it at the repo root — this is what candle's own SD examples do.
     let mut files: Vec<(&str, &str, PathBuf)> = vec![
-        ("openai/clip-vit-large-patch14", "tokenizer.json",                        dir.join("tokenizer.json")),
-        (def.hf_repo,                     "text_encoder/model.safetensors",         dir.join("text_encoder/model.safetensors")),
-        (def.hf_repo,                     "unet/diffusion_pytorch_model.safetensors", dir.join("unet/diffusion_pytorch_model.safetensors")),
-        (def.hf_repo,                     "vae/diffusion_pytorch_model.safetensors",  dir.join("vae/diffusion_pytorch_model.safetensors")),
+        (
+            "openai/clip-vit-large-patch14",
+            "tokenizer.json",
+            dir.join("tokenizer.json"),
+        ),
+        (
+            def.hf_repo,
+            "text_encoder/model.safetensors",
+            dir.join("text_encoder/model.safetensors"),
+        ),
+        (
+            def.hf_repo,
+            "unet/diffusion_pytorch_model.safetensors",
+            dir.join("unet/diffusion_pytorch_model.safetensors"),
+        ),
+        (
+            def.hf_repo,
+            "vae/diffusion_pytorch_model.safetensors",
+            dir.join("vae/diffusion_pytorch_model.safetensors"),
+        ),
     ];
+
+    // SDXL requires a second text encoder (OpenCLIP ViT-bigG → 1280-dim).
+    if matches!(def.base, ModelBase::SdXl) {
+        files.push((
+            def.hf_repo,
+            "text_encoder_2/model.safetensors",
+            dir.join("text_encoder_2/model.safetensors"),
+        ));
+    }
 
     if let Some(lora) = &def.lora {
         files.push((lora.hf_repo, lora.filename, dir.join("lora.safetensors")));
@@ -249,8 +289,7 @@ pub async fn download_model(
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn hf_url(repo: &str, path: &str) -> String {
-    let base = std::env::var("HF_ENDPOINT")
-        .unwrap_or_else(|_| "https://huggingface.co".into());
+    let base = std::env::var("HF_ENDPOINT").unwrap_or_else(|_| "https://huggingface.co".into());
     format!("{base}/{repo}/resolve/main/{path}")
 }
 
@@ -291,7 +330,9 @@ async fn download_file(
             });
         }
         404 => {
-            return Err(DownloadError::NotFound { url: url.to_string() });
+            return Err(DownloadError::NotFound {
+                url: url.to_string(),
+            });
         }
         code => {
             return Err(DownloadError::Other(format!("HTTP {code}: {url}")));
@@ -306,13 +347,16 @@ async fn download_file(
     let mut file = std::fs::File::create(&tmp)
         .map_err(|e| DownloadError::Other(format!("Create {}: {e}", tmp.display())))?;
 
-    let _ = app.emit("ai-gen:download-progress", DownloadProgress {
-        model_id: model_id.into(),
-        file_name: file_name.into(),
-        bytes_done: 0,
-        bytes_total: total,
-        percent: 0.0,
-    });
+    let _ = app.emit(
+        "ai-gen:download-progress",
+        DownloadProgress {
+            model_id: model_id.into(),
+            file_name: file_name.into(),
+            bytes_done: 0,
+            bytes_total: total,
+            percent: 0.0,
+        },
+    );
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| DownloadError::Other(format!("Stream: {e}")))?;
@@ -320,19 +364,25 @@ async fn download_file(
             .map_err(|e| DownloadError::Other(format!("Write: {e}")))?;
         downloaded += chunk.len() as u64;
 
-        let percent = if total > 0 { downloaded as f32 / total as f32 * 100.0 } else { 0.0 };
-        let _ = app.emit("ai-gen:download-progress", DownloadProgress {
-            model_id: model_id.into(),
-            file_name: file_name.into(),
-            bytes_done: downloaded,
-            bytes_total: total,
-            percent,
-        });
+        let percent = if total > 0 {
+            downloaded as f32 / total as f32 * 100.0
+        } else {
+            0.0
+        };
+        let _ = app.emit(
+            "ai-gen:download-progress",
+            DownloadProgress {
+                model_id: model_id.into(),
+                file_name: file_name.into(),
+                bytes_done: downloaded,
+                bytes_total: total,
+                percent,
+            },
+        );
     }
 
     drop(file);
-    std::fs::rename(&tmp, dest)
-        .map_err(|e| DownloadError::Other(format!("Rename: {e}")))?;
+    std::fs::rename(&tmp, dest).map_err(|e| DownloadError::Other(format!("Rename: {e}")))?;
 
     eprintln!("[AI-GEN] Done: {}", dest.display());
     Ok(())

@@ -16,10 +16,9 @@
 ///              + "point_labels"        [1, N]      float32  (1=fg, 0=bg)
 ///   Decoder out : "mask_for_mem"       [1, M, 1024, 1024]  sigmoid
 ///              + "pred_mask"           [1, M, 256, 256]    logits (fallback)
-
 use image::{DynamicImage, GenericImageView};
 use ndarray::{Array2, Array3, Array4, ArrayD};
-use ort::{session::Session, session::builder::GraphOptimizationLevel, value::Tensor};
+use ort::{session::builder::GraphOptimizationLevel, session::Session, value::Tensor};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
@@ -95,19 +94,27 @@ pub fn run_sam2(
 
     // ── Encoder (cached per image) ──────────────────────────────────────────
     let needs_encode = {
-        let cache = CACHE.get().unwrap().lock().map_err(|_| "Cache lock poisoned")?;
+        let cache = CACHE
+            .get()
+            .unwrap()
+            .lock()
+            .map_err(|_| "Cache lock poisoned")?;
         cache.as_ref().map_or(true, |c| c.image_hash != img_hash)
     };
 
     if needs_encode {
         let array = preprocess_image(img);
-        let enc_input = Tensor::<f32>::from_array(array)
-            .map_err(|e| format!("Create encoder tensor: {e}"))?;
+        let enc_input =
+            Tensor::<f32>::from_array(array).map_err(|e| format!("Create encoder tensor: {e}"))?;
 
         // Inner block: `enc_out` borrows from `encoder` (MutexGuard).
         // Both are dropped at the end of this block, releasing the lock.
         let (embeddings, high_res_0, high_res_1) = {
-            let mut encoder = ENCODER.get().unwrap().lock().map_err(|_| "Encoder lock poisoned")?;
+            let mut encoder = ENCODER
+                .get()
+                .unwrap()
+                .lock()
+                .map_err(|_| "Encoder lock poisoned")?;
             let enc_out = encoder
                 .run(ort::inputs![ENC_IN_IMAGE => enc_input])
                 .map_err(|e| format!("Encoder inference: {e}"))?;
@@ -127,7 +134,11 @@ pub fn run_sam2(
             (emb, hr0, hr1)
         }; // encoder lock released here
 
-        let mut cache = CACHE.get().unwrap().lock().map_err(|_| "Cache lock poisoned")?;
+        let mut cache = CACHE
+            .get()
+            .unwrap()
+            .lock()
+            .map_err(|_| "Cache lock poisoned")?;
         *cache = Some(EncoderCache {
             image_hash: img_hash,
             encoding: ImageEncoding {
@@ -142,24 +153,36 @@ pub fn run_sam2(
 
     // Clone cached tensors to release the lock before running the decoder.
     let (embeddings, high_res_0, high_res_1) = {
-        let cache = CACHE.get().unwrap().lock().map_err(|_| "Cache lock poisoned")?;
+        let cache = CACHE
+            .get()
+            .unwrap()
+            .lock()
+            .map_err(|_| "Cache lock poisoned")?;
         let enc = &cache.as_ref().unwrap().encoding;
-        (enc.embeddings.clone(), enc.high_res_0.clone(), enc.high_res_1.clone())
+        (
+            enc.embeddings.clone(),
+            enc.high_res_0.clone(),
+            enc.high_res_1.clone(),
+        )
     };
 
     // ── Decoder ─────────────────────────────────────────────────────────────
     let (point_coords, point_labels) = make_point_tensors(points, orig_w, orig_h);
 
     // `from_array` requires owned Array<T,D> – all variables here are owned.
-    let embed_t  = Tensor::<f32>::from_array(embeddings).map_err(|e| format!("{e}"))?;
-    let hr0_t    = Tensor::<f32>::from_array(high_res_0).map_err(|e| format!("{e}"))?;
-    let hr1_t    = Tensor::<f32>::from_array(high_res_1).map_err(|e| format!("{e}"))?;
+    let embed_t = Tensor::<f32>::from_array(embeddings).map_err(|e| format!("{e}"))?;
+    let hr0_t = Tensor::<f32>::from_array(high_res_0).map_err(|e| format!("{e}"))?;
+    let hr1_t = Tensor::<f32>::from_array(high_res_1).map_err(|e| format!("{e}"))?;
     let coords_t = Tensor::<f32>::from_array(point_coords).map_err(|e| format!("{e}"))?;
     let labels_t = Tensor::<f32>::from_array(point_labels).map_err(|e| format!("{e}"))?;
 
     // Inner block: `dec_out` borrows from `decoder`. Both dropped at block end.
     let (flat, mask_h, mask_w, threshold): (Vec<f32>, usize, usize, f32) = {
-        let mut decoder = DECODER.get().unwrap().lock().map_err(|_| "Decoder lock poisoned")?;
+        let mut decoder = DECODER
+            .get()
+            .unwrap()
+            .lock()
+            .map_err(|_| "Decoder lock poisoned")?;
         let dec_out = decoder
             .run(ort::inputs![
                 DEC_IN_EMBED  => embed_t,
@@ -209,8 +232,11 @@ pub fn run_sam2(
     for y in 0..mask_h {
         for x in 0..mask_w {
             let val = flat[y * mask_w + x];
-            gray.put_pixel(x as u32, y as u32,
-                image::Luma([if val > threshold { 255u8 } else { 0u8 }]));
+            gray.put_pixel(
+                x as u32,
+                y as u32,
+                image::Luma([if val > threshold { 255u8 } else { 0u8 }]),
+            );
         }
     }
 

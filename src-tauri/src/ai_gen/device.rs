@@ -40,13 +40,16 @@ pub fn detect_device() -> (Device, DeviceInfo) {
             match Device::new_cuda(0) {
                 Ok(dev) => {
                     eprintln!("[AI-GEN] Using CUDA device");
-                    return (dev, DeviceInfo {
-                        kind: "cuda".into(),
-                        name: "CUDA GPU".into(),
-                        vram_mb: None,
-                        is_accelerated: true,
-                        gpu_available_but_disabled: false,
-                    });
+                    return (
+                        dev,
+                        DeviceInfo {
+                            kind: "cuda".into(),
+                            name: "CUDA GPU".into(),
+                            vram_mb: None,
+                            is_accelerated: true,
+                            gpu_available_but_disabled: false,
+                        },
+                    );
                 }
                 Err(e) => {
                     eprintln!("[AI-GEN] CUDA available but init failed: {e} — falling back");
@@ -61,13 +64,16 @@ pub fn detect_device() -> (Device, DeviceInfo) {
         match Device::new_metal(0) {
             Ok(dev) => {
                 eprintln!("[AI-GEN] Using Metal device");
-                return (dev, DeviceInfo {
-                    kind: "metal".into(),
-                    name: "Apple Metal GPU".into(),
-                    vram_mb: None,
-                    is_accelerated: true,
-                    gpu_available_but_disabled: false,
-                });
+                return (
+                    dev,
+                    DeviceInfo {
+                        kind: "metal".into(),
+                        name: "Apple Metal GPU".into(),
+                        vram_mb: None,
+                        is_accelerated: true,
+                        gpu_available_but_disabled: false,
+                    },
+                );
             }
             Err(e) => {
                 eprintln!("[AI-GEN] Metal init failed: {e} — falling back to CPU");
@@ -83,13 +89,16 @@ pub fn detect_device() -> (Device, DeviceInfo) {
     let gpu_hint = gpu_present_but_feature_missing();
 
     eprintln!("[AI-GEN] Using CPU device (gpu_hint={})", gpu_hint);
-    (Device::Cpu, DeviceInfo {
-        kind: "cpu".into(),
-        name: cpu_name,
-        vram_mb: None,
-        is_accelerated: false,
-        gpu_available_but_disabled: gpu_hint,
-    })
+    (
+        Device::Cpu,
+        DeviceInfo {
+            kind: "cpu".into(),
+            name: cpu_name,
+            vram_mb: None,
+            is_accelerated: false,
+            gpu_available_but_disabled: gpu_hint,
+        },
+    )
 }
 
 /// Returns `true` when a GPU is likely present on this machine but the

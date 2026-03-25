@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from './store/useAppStore'
 import { localeOptions } from './i18n'
@@ -15,6 +15,24 @@ const nextLocale = computed(() => {
   const currentIndex = localeOptions.findIndex((option) => option.code === app.locale)
   return localeOptions[(currentIndex + 1) % localeOptions.length] ?? localeOptions[0]
 })
+
+// ── Toast 复制功能 ──────────────────────────────────────────
+const toastCopied = ref(false)
+let _copyResetTimer: ReturnType<typeof setTimeout> | null = null
+
+function handleToastClick() {
+  if (app.toastType === 'error' && app.toastMessage) {
+    navigator.clipboard.writeText(app.toastMessage).then(() => {
+      toastCopied.value = true
+      if (_copyResetTimer) clearTimeout(_copyResetTimer)
+      _copyResetTimer = setTimeout(() => {
+        toastCopied.value = false
+      }, 1500)
+    })
+  } else {
+    app.dismissToast()
+  }
+}
 </script>
 
 <template>
@@ -68,15 +86,18 @@ const nextLocale = computed(() => {
       <div
         v-if="app.toastMessage"
         class="toast"
-        :class="`toast--${app.toastType}`"
-        @click="app.dismissToast()"
+        :class="[`toast--${app.toastType}`, { 'toast--copied': toastCopied }]"
+        :title="app.toastType === 'error' ? (toastCopied ? '已复制' : '点击复制错误信息') : '点击关闭'"
+        @click="handleToastClick"
       >
         <span class="toast__icon">
-          <template v-if="app.toastType === 'warn'">!</template>
+          <template v-if="toastCopied">✓</template>
+          <template v-else-if="app.toastType === 'warn'">!</template>
           <template v-else-if="app.toastType === 'error'">×</template>
           <template v-else>i</template>
         </span>
-        <span class="toast__msg">{{ app.toastMessage }}</span>
+        <span class="toast__msg">{{ toastCopied ? '已复制到剪贴板' : app.toastMessage }}</span>
+        <span v-if="app.toastType === 'error' && !toastCopied" class="toast__copy-hint">点击复制</span>
       </div>
     </Transition>
   </div>
@@ -193,24 +214,45 @@ const nextLocale = computed(() => {
   transform: translateX(-50%);
   z-index: calc(var(--z-modal) + 1);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 10px 18px;
   border-radius: var(--radius-lg);
   font-size: var(--text-sm);
   cursor: pointer;
   box-shadow: 0 4px 20px rgba(0,0,0,0.4);
-  max-width: 480px;
+  max-width: 560px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition: border-color 0.2s, background 0.2s;
+}
+/* error toast 允许多行展示完整错误 */
+.toast--error {
+  white-space: normal;
+  word-break: break-all;
+  align-items: flex-start;
 }
 .toast--info  { background: var(--bg-panel); border: 1px solid var(--border); color: var(--text-primary); }
 .toast--warn  { background: #3d2e0e; border: 1px solid #a16207; color: #fbbf24; }
 .toast--error { background: #2d1212; border: 1px solid #991b1b; color: #f87171; }
+.toast--error:hover { background: #3a1515; border-color: #b91c1c; }
+.toast--copied { background: #122d12 !important; border-color: #16a34a !important; color: #4ade80 !important; }
 
-.toast__icon { font-size: 14px; flex-shrink: 0; }
-.toast__msg  { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.toast__icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+.toast__msg  { flex: 1; overflow: hidden; text-overflow: ellipsis; line-height: 1.5; }
+.toast__copy-hint {
+  flex-shrink: 0;
+  font-size: 11px;
+  opacity: 0.55;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-left: 4px;
+  white-space: nowrap;
+  align-self: flex-start;
+  margin-top: 1px;
+}
 
 .toast-slide-enter-active,
 .toast-slide-leave-active {

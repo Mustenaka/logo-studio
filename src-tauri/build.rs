@@ -9,12 +9,14 @@ fn main() {
 /// - Metal feature enabled → validate we are on macOS
 /// - No GPU feature        → detect GPU presence and print the enabling command
 fn check_gpu_features() {
-    let cuda_on  = std::env::var("CARGO_FEATURE_CUDA").is_ok();
+    let cuda_on = std::env::var("CARGO_FEATURE_CUDA").is_ok();
     let metal_on = std::env::var("CARGO_FEATURE_METAL").is_ok();
 
     if cuda_on {
         if cuda_toolkit_present() {
-            println!("cargo:warning=[AI-GEN] ✓ CUDA feature enabled — building with NVIDIA GPU support");
+            println!(
+                "cargo:warning=[AI-GEN] ✓ CUDA feature enabled — building with NVIDIA GPU support"
+            );
 
             // On Windows, nvcc requires cl.exe (MSVC C++ compiler) in PATH or via
             // NVCC_CCBIN. Warn early if neither is set so the user gets a clear
@@ -52,7 +54,9 @@ fn check_gpu_features() {
         #[cfg(not(target_os = "macos"))]
         println!("cargo:warning=[AI-GEN] ⚠ metal feature is ON but target is not macOS — compile will likely fail.");
         #[cfg(target_os = "macos")]
-        println!("cargo:warning=[AI-GEN] ✓ Metal feature enabled — building with Apple GPU support");
+        println!(
+            "cargo:warning=[AI-GEN] ✓ Metal feature enabled — building with Apple GPU support"
+        );
         return;
     }
 

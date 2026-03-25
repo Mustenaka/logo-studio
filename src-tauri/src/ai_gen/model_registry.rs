@@ -9,7 +9,6 @@
 ///   unet/diffusion_pytorch_model.safetensors  ← from hf_repo
 ///   vae/diffusion_pytorch_model.safetensors   ← from hf_repo
 ///   lora.safetensors                          ← optional, from lora.hf_repo
-
 use serde::Serialize;
 
 // ── Base model family ─────────────────────────────────────────────────────────
