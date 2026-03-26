@@ -21,7 +21,41 @@ const customHeight = ref<number>(256)
 const seed = ref<number | null>(null)
 const randomSeed = ref(true)
 // Sampler
-const sampler = ref<'ddim' | 'euler' | 'euler_a' | 'heun' | 'dpm_pp_2m' | 'dpm_pp_2m_karras' | 'dpm_pp_2m_sde_karras' | 'plms'>('dpm_pp_2m_karras')
+type SamplerKey = 'ddim' | 'euler' | 'euler_a' | 'heun' | 'dpm_pp_2m' | 'dpm_pp_2m_karras' | 'dpm_pp_2m_sde_karras' | 'plms'
+const sampler = ref<SamplerKey>('dpm_pp_2m_karras')
+
+// ── Sampler × Model presets ────────────────────────────────────────────────
+interface SamplerPresetEntry { stepsCpu: number; stepsGpu: number; guidance: number }
+
+const SAMPLER_PRESETS: Record<'sd15' | 'sdxl', Record<SamplerKey, SamplerPresetEntry>> = {
+  sd15: {
+    ddim:                 { stepsCpu: 20, stepsGpu: 30, guidance: 7.5 },
+    euler:                { stepsCpu: 20, stepsGpu: 30, guidance: 7.5 },
+    euler_a:              { stepsCpu: 20, stepsGpu: 30, guidance: 7.5 },
+    heun:                 { stepsCpu: 15, stepsGpu: 20, guidance: 7.5 },
+    dpm_pp_2m:            { stepsCpu: 20, stepsGpu: 30, guidance: 7.5 },
+    dpm_pp_2m_karras:     { stepsCpu: 20, stepsGpu: 30, guidance: 7.5 },
+    dpm_pp_2m_sde_karras: { stepsCpu: 20, stepsGpu: 25, guidance: 7.0 },
+    plms:                 { stepsCpu: 15, stepsGpu: 25, guidance: 7.5 },
+  },
+  sdxl: {
+    ddim:                 { stepsCpu: 4, stepsGpu: 4, guidance: 0.0 },
+    euler:                { stepsCpu: 4, stepsGpu: 4, guidance: 0.0 },
+    euler_a:              { stepsCpu: 4, stepsGpu: 4, guidance: 0.0 },
+    heun:                 { stepsCpu: 3, stepsGpu: 3, guidance: 0.0 },
+    dpm_pp_2m:            { stepsCpu: 4, stepsGpu: 4, guidance: 0.0 },
+    dpm_pp_2m_karras:     { stepsCpu: 4, stepsGpu: 4, guidance: 0.0 },
+    dpm_pp_2m_sde_karras: { stepsCpu: 4, stepsGpu: 4, guidance: 0.0 },
+    plms:                 { stepsCpu: 4, stepsGpu: 4, guidance: 0.0 },
+  },
+}
+
+const samplerPreset = computed(() => {
+  const base = aiGen.selectedModel.value?.base ?? 'sd15'
+  const isAccelerated = aiGen.device.value?.isAccelerated ?? false
+  const p = SAMPLER_PRESETS[base][sampler.value]
+  return { steps: isAccelerated ? p.stepsGpu : p.stepsCpu, guidance: p.guidance }
+})
 // Hires Fix
 const hiresFixEnabled = ref(false)
 const hiresFixWidth = ref<number>(512)
@@ -37,6 +71,15 @@ onMounted(() => aiGen.init())
 
 watch(aiGen.selectedModel, (m) => {
   if (!prompt.value && m) prompt.value = ''
+  // Reset to preset when model changes so recommended values are shown
+  customSteps.value = null
+  customGuidance.value = null
+})
+
+// Auto-apply preset when sampler changes
+watch(sampler, () => {
+  customSteps.value = null
+  customGuidance.value = null
 })
 
 const canGenerate = computed(() =>
@@ -46,16 +89,17 @@ const canGenerate = computed(() =>
   !aiGen.isDownloading.value
 )
 
-const effectiveSteps = computed(() => {
-  if (customSteps.value) return customSteps.value
-  const m = aiGen.selectedModel.value
-  if (!m) return 20
-  return aiGen.device.value?.isAccelerated ? m.defaultStepsGpu : m.defaultStepsCpu
-})
+const effectiveSteps = computed(() => customSteps.value ?? samplerPreset.value.steps)
+const effectiveGuidance = computed(() => customGuidance.value ?? samplerPreset.value.guidance)
 
-const effectiveGuidance = computed(() =>
-  customGuidance.value ?? aiGen.selectedModel.value?.defaultGuidance ?? 7.5
-)
+// True when user has manually overridden the preset value
+const stepsIsCustom = computed(() => customSteps.value !== null)
+const guidanceIsCustom = computed(() => customGuidance.value !== null)
+
+function applyPreset() {
+  customSteps.value = null
+  customGuidance.value = null
+}
 
 const resolutionOptions = computed(() => {
   const base = aiGen.selectedModel.value?.base
@@ -400,6 +444,22 @@ function handleSelectModel(id: string) {
             @click="sampler = 'plms'"
           >{{ t('aiGen.sampler.plms') }}</button>
         </div>
+      </div>
+
+      <!-- Preset hint -->
+      <div class="preset-row">
+        <span class="preset-row__label">{{ t('aiGen.sections.preset') }}</span>
+        <div class="preset-row__values">
+          <span class="preset-chip">{{ samplerPreset.steps }} {{ t('aiGen.sections.stepsUnit') }}</span>
+          <span class="preset-sep">·</span>
+          <span class="preset-chip">CFG {{ samplerPreset.guidance }}</span>
+        </div>
+        <button
+          v-if="stepsIsCustom || guidanceIsCustom"
+          class="preset-reset-btn"
+          :disabled="aiGen.isGenerating.value"
+          @click="applyPreset"
+        >{{ t('aiGen.sections.presetReset') }}</button>
       </div>
 
       <!-- Steps -->
@@ -1350,6 +1410,62 @@ function handleSelectModel(id: string) {
   color: var(--accent-hover);
 }
 .sampler-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Sampler preset hint ──────────────────────────────────────────── */
+.preset-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: rgba(99,102,241,0.05);
+  border: 1px solid rgba(99,102,241,0.15);
+  border-radius: var(--radius-sm);
+}
+.preset-row__label {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-tertiary);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+.preset-row__values {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+.preset-chip {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-hover);
+  background: rgba(99,102,241,0.1);
+  border: 1px solid rgba(99,102,241,0.25);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+.preset-sep {
+  font-size: 10px;
+  color: var(--text-disabled);
+}
+.preset-reset-btn {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 6px;
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.preset-reset-btn:hover:not(:disabled) {
+  color: var(--accent-hover);
+  border-color: rgba(99,102,241,0.4);
+}
+.preset-reset-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ── Hires Fix ────────────────────────────────────────────────────── */
 .hires-header {
