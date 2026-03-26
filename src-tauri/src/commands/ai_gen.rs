@@ -298,8 +298,13 @@ async fn run_generate(
     });
 
     let chosen_sampler = match sampler.as_deref() {
+        Some("euler") => Sampler::Euler,
         Some("euler_a") => Sampler::EulerA,
+        Some("heun") => Sampler::Heun,
+        Some("dpm_pp_2m") => Sampler::DpmPP2M,
         Some("dpm_pp_2m_karras") => Sampler::DpmPP2MKarras,
+        Some("dpm_pp_2m_sde_karras") => Sampler::DpmPP2MSdeKarras,
+        Some("plms") => Sampler::Plms,
         _ => Sampler::Ddim,
     };
 

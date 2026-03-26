@@ -21,7 +21,7 @@ const customHeight = ref<number>(256)
 const seed = ref<number | null>(null)
 const randomSeed = ref(true)
 // Sampler
-const sampler = ref<'ddim' | 'euler_a' | 'dpm_pp_2m_karras'>('dpm_pp_2m_karras')
+const sampler = ref<'ddim' | 'euler' | 'euler_a' | 'heun' | 'dpm_pp_2m' | 'dpm_pp_2m_karras' | 'dpm_pp_2m_sde_karras' | 'plms'>('dpm_pp_2m_karras')
 // Hires Fix
 const hiresFixEnabled = ref(false)
 const hiresFixWidth = ref<number>(512)
@@ -359,16 +359,46 @@ function handleSelectModel(id: string) {
           >{{ t('aiGen.sampler.dpmPP2MKarras') }}</button>
           <button
             class="sampler-btn"
-            :class="{ 'sampler-btn--active': sampler === 'ddim' }"
+            :class="{ 'sampler-btn--active': sampler === 'dpm_pp_2m' }"
             :disabled="aiGen.isGenerating.value"
-            @click="sampler = 'ddim'"
-          >{{ t('aiGen.sampler.ddim') }}</button>
+            @click="sampler = 'dpm_pp_2m'"
+          >{{ t('aiGen.sampler.dpmPP2M') }}</button>
+          <button
+            class="sampler-btn"
+            :class="{ 'sampler-btn--active': sampler === 'dpm_pp_2m_sde_karras' }"
+            :disabled="aiGen.isGenerating.value"
+            @click="sampler = 'dpm_pp_2m_sde_karras'"
+          >{{ t('aiGen.sampler.dpmPP2MSdeKarras') }}</button>
           <button
             class="sampler-btn"
             :class="{ 'sampler-btn--active': sampler === 'euler_a' }"
             :disabled="aiGen.isGenerating.value"
             @click="sampler = 'euler_a'"
           >{{ t('aiGen.sampler.eulerA') }}</button>
+          <button
+            class="sampler-btn"
+            :class="{ 'sampler-btn--active': sampler === 'euler' }"
+            :disabled="aiGen.isGenerating.value"
+            @click="sampler = 'euler'"
+          >{{ t('aiGen.sampler.euler') }}</button>
+          <button
+            class="sampler-btn"
+            :class="{ 'sampler-btn--active': sampler === 'heun' }"
+            :disabled="aiGen.isGenerating.value"
+            @click="sampler = 'heun'"
+          >{{ t('aiGen.sampler.heun') }}</button>
+          <button
+            class="sampler-btn"
+            :class="{ 'sampler-btn--active': sampler === 'ddim' }"
+            :disabled="aiGen.isGenerating.value"
+            @click="sampler = 'ddim'"
+          >{{ t('aiGen.sampler.ddim') }}</button>
+          <button
+            class="sampler-btn"
+            :class="{ 'sampler-btn--active': sampler === 'plms' }"
+            :disabled="aiGen.isGenerating.value"
+            @click="sampler = 'plms'"
+          >{{ t('aiGen.sampler.plms') }}</button>
         </div>
       </div>
 
@@ -1293,6 +1323,7 @@ function handleSelectModel(id: string) {
 /* ── Sampler toggle group ─────────────────────────────────────────── */
 .sampler-group {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
 }
 .sampler-btn {

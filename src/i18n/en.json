@@ -220,7 +220,7 @@
       "negativePromptHint": "what to avoid",
       "seed": "Seed",
       "sampler": "Sampler",
-      "samplerHint": "DDIM is stable & reproducible; Euler A adds variety",
+      "samplerHint": "DPM++ 2M Karras for best quality; Euler A / SDE for variety; Heun for highest quality (slower)",
       "hiresFix": "Hires Fix",
       "hiresFixHint": "Generate at base res, then upscale & re-denoise for sharper detail",
       "hiresTargetRes": "Target Resolution",
@@ -230,8 +230,13 @@
     },
     "sampler": {
       "dpmPP2MKarras": "DPM++ 2M Karras",
+      "dpmPP2M": "DPM++ 2M",
+      "dpmPP2MSdeKarras": "DPM++ SDE Karras",
+      "eulerA": "Euler A",
+      "euler": "Euler",
+      "heun": "Heun",
       "ddim": "DDIM",
-      "eulerA": "Euler A"
+      "plms": "PLMS"
     },
     "models": {
       "downloaded": "Downloaded",

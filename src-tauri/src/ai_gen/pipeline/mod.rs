@@ -38,20 +38,30 @@ use scheduler::DdimScheduler;
 pub enum Sampler {
     /// Deterministic DDIM (eta=0). Fast, reproducible with fixed seed.
     Ddim,
+    /// Deterministic Euler (eta=0). Linear sigma spacing, stable outputs.
+    Euler,
     /// Euler Ancestral — stochastic noise each step. More varied outputs.
     EulerA,
+    /// Heun — second-order predictor-corrector. Higher quality, 2× UNet calls per step.
+    Heun,
+    /// DPM++ 2M — second-order multistep with linear sigma spacing.
+    DpmPP2M,
     /// DPM++ 2M Karras — second-order multistep + Karras sigma spacing.
     /// Best quality-per-step ratio; recommended for ≥15 steps.
     DpmPP2MKarras,
+    /// DPM++ SDE Karras — stochastic SDE variant with Karras sigma spacing.
+    /// More variety than DPM++ 2M Karras; good for creative outputs.
+    DpmPP2MSdeKarras,
+    /// PLMS — Pseudo Linear Multi-Step. Fast convergence, good quality.
+    Plms,
 }
 
 impl Sampler {
-    /// eta for DDIM/Euler A; DPM++ 2M uses its own step function.
+    /// Stochasticity level (eta). Determines whether random noise is added each step.
     fn eta(&self) -> f64 {
         match self {
-            Sampler::Ddim => 0.0,
-            Sampler::EulerA => 1.0,
-            Sampler::DpmPP2MKarras => 0.0,
+            Sampler::EulerA | Sampler::DpmPP2MSdeKarras => 1.0,
+            _ => 0.0,
         }
     }
 }
@@ -223,9 +233,10 @@ pub fn run_pipeline(
     // Total steps reported to the caller = base + hires
     let report_total = base_total + hires_total;
 
-    // Build scheduler — DPM++ 2M Karras uses its own constructor.
+    // Build scheduler based on sampler.
     let scheduler = match params.sampler {
         Sampler::DpmPP2MKarras => DdimScheduler::with_karras(params.steps),
+        Sampler::DpmPP2MSdeKarras => DdimScheduler::with_karras_sde(params.steps),
         _ => DdimScheduler::with_eta(params.steps, params.sampler.eta()),
     };
     let timesteps = scheduler.timesteps().to_vec();
@@ -240,6 +251,8 @@ pub fn run_pipeline(
 
     // DPM++ 2M multistep state: (prev_denoised, prev_h)
     let mut dpm2m_state: Option<(Vec<f32>, f64)> = None;
+    // PLMS cached noise predictions (oldest first, max 3 entries)
+    let mut plms_preds: Vec<Vec<f32>> = Vec::new();
 
     for (step_idx, &t) in timesteps.iter().enumerate() {
         let latent_input = Tensor::cat(&[&latents, &latents], 0)
@@ -270,22 +283,84 @@ pub fn run_pipeline(
             .and_then(|t| t.to_vec1::<f32>())
             .map_err(|e| format!("Flatten guided: {e}"))?;
 
+        // Heun: predictor-corrector needs a second UNet call at t_prev.
+        // Pre-compute the averaged noise prediction before the match dispatch.
+        let heun_avg_noise: Option<Vec<f32>> = if params.sampler == Sampler::Heun {
+            // Predictor: Euler step to get candidate next latents
+            let x_mid_flat = scheduler.step(&latents_flat, &guided_flat, step_idx, None);
+            let t_prev = if step_idx + 1 < timesteps.len() {
+                timesteps[step_idx + 1]
+            } else {
+                0
+            };
+            let x_mid_t = Tensor::from_vec(
+                x_mid_flat,
+                (1usize, 4usize, latent_h, latent_w),
+                device,
+            )
+            .map_err(|e| format!("Heun x_mid rebuild: {e}"))?;
+            let x_mid_cat =
+                Tensor::cat(&[&x_mid_t, &x_mid_t], 0).map_err(|e| format!("Heun cat: {e}"))?;
+            let noise_pred2 = unet
+                .forward(&x_mid_cat, t_prev as f64, &text_embeddings)
+                .map_err(|e| format!("Heun UNet corrector: {e}"))?;
+            let noise_uncond2 = noise_pred2.i(0..1).map_err(|e| format!("{e}"))?;
+            let noise_cond2 = noise_pred2.i(1..2).map_err(|e| format!("{e}"))?;
+            let guided2 = if params.guidance_scale == 0.0 {
+                noise_cond2
+            } else {
+                let diff2 = (&noise_cond2 - &noise_uncond2)
+                    .map_err(|e| format!("Heun guidance diff: {e}"))?;
+                let scaled2 = (diff2 * params.guidance_scale)
+                    .map_err(|e| format!("Heun guidance scale: {e}"))?;
+                (&noise_uncond2 + &scaled2).map_err(|e| format!("Heun guidance add: {e}"))?
+            };
+            let guided_flat2: Vec<f32> = guided2
+                .flatten_all()
+                .and_then(|t| t.to_vec1::<f32>())
+                .map_err(|e| format!("Heun flatten corrector: {e}"))?;
+            // Corrector: average of both predictions
+            let avg: Vec<f32> = guided_flat
+                .iter()
+                .zip(guided_flat2.iter())
+                .map(|(&a, &b)| (a + b) * 0.5)
+                .collect();
+            Some(avg)
+        } else {
+            None
+        };
+
+        // Use averaged noise for Heun; original guided noise for all other samplers.
+        let effective_noise: &[f32] =
+            heun_avg_noise.as_deref().unwrap_or(&guided_flat);
+
         // Dispatch to the correct sampler step function
         let new_flat = match params.sampler {
-            Sampler::DpmPP2MKarras => {
+            Sampler::DpmPP2MKarras | Sampler::DpmPP2M => {
                 let prev = dpm2m_state.as_ref().map(|(d, h)| (d.as_slice(), *h));
                 let (new_latents, denoised, h) =
-                    scheduler.step_dpm2m(&latents_flat, &guided_flat, step_idx, prev);
+                    scheduler.step_dpm2m(&latents_flat, effective_noise, step_idx, prev);
                 dpm2m_state = Some((denoised, h));
                 new_latents
             }
+            Sampler::Plms => {
+                let new_lat =
+                    scheduler.step_plms(&latents_flat, &guided_flat, step_idx, &plms_preds);
+                // Cache current prediction (Adams-Bashforth history, max 3 entries)
+                plms_preds.push(guided_flat.clone());
+                if plms_preds.len() > 3 {
+                    plms_preds.remove(0);
+                }
+                new_lat
+            }
             _ => {
+                // DDIM, Euler, EulerA, Heun (effective_noise already averaged), DpmPP2MSdeKarras
                 let step_noise = if scheduler.eta > 0.0 {
                     Some(sample_noise_vec(latents_flat.len(), &mut rng))
                 } else {
                     None
                 };
-                scheduler.step(&latents_flat, &guided_flat, step_idx, step_noise.as_deref())
+                scheduler.step(&latents_flat, effective_noise, step_idx, step_noise.as_deref())
             }
         };
 

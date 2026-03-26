@@ -220,7 +220,7 @@
       "negativePromptHint": "描述不想出现的内容",
       "seed": "种子",
       "sampler": "采样器",
-      "samplerHint": "DDIM 更稳定，Euler A 更多样",
+      "samplerHint": "DPM++ 2M Karras 质量最优；Euler A / SDE 更多样；Heun 精度最高（较慢）",
       "hiresFix": "Hires Fix",
       "hiresFixHint": "先低分辨率生成，再放大重绘，提升细节",
       "hiresTargetRes": "目标分辨率",
@@ -230,8 +230,13 @@
     },
     "sampler": {
       "dpmPP2MKarras": "DPM++ 2M Karras",
+      "dpmPP2M": "DPM++ 2M",
+      "dpmPP2MSdeKarras": "DPM++ SDE Karras",
+      "eulerA": "Euler A",
+      "euler": "Euler",
+      "heun": "Heun",
       "ddim": "DDIM",
-      "eulerA": "Euler A"
+      "plms": "PLMS"
     },
     "models": {
       "downloaded": "已下载",

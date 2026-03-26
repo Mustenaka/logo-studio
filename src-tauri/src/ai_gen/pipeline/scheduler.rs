@@ -29,6 +29,7 @@ const BETA_END: f64 = 0.012;
 
 impl DdimScheduler {
     /// Deterministic DDIM scheduler (eta=0).
+    #[allow(dead_code)]
     pub fn new(num_inference_steps: usize) -> Self {
         Self::with_eta(num_inference_steps, 0.0)
     }
@@ -274,6 +275,105 @@ impl DdimScheduler {
 
         let denoised_f32: Vec<f32> = denoised.iter().map(|&d| d as f32).collect();
         (new_latents, denoised_f32, h)
+    }
+
+    /// Scheduler with Karras sigma spacing for DPM++ SDE Karras.
+    /// Same as `with_karras` but with eta=1.0 for stochastic sampling.
+    pub fn with_karras_sde(num_inference_steps: usize) -> Self {
+        let mut sched = Self::with_karras(num_inference_steps);
+        sched.eta = 1.0;
+        sched
+    }
+
+    /// PLMS step (Pseudo Linear Multi-Step).
+    ///
+    /// Reference: Liu et al. 2022 — https://arxiv.org/abs/2202.09778
+    ///
+    /// Uses Adams-Bashforth multi-step coefficients to extrapolate from cached
+    /// noise predictions, then applies a standard DDIM update.
+    ///
+    /// `prev_preds` — previous noise predictions, oldest first (up to 3 items).
+    pub fn step_plms(
+        &self,
+        latents: &[f32],
+        noise_pred: &[f32],
+        step_idx: usize,
+        prev_preds: &[Vec<f32>],
+    ) -> Vec<f32> {
+        assert_eq!(latents.len(), noise_pred.len());
+
+        // Adams-Bashforth multi-step extrapolation
+        let effective_noise: Vec<f64> = match prev_preds.len() {
+            0 => {
+                // 1st order (Euler / DDIM)
+                noise_pred.iter().map(|&e| e as f64).collect()
+            }
+            1 => {
+                // 2nd order: (3·eᵢ − eᵢ₋₁) / 2
+                let e_prev = &prev_preds[prev_preds.len() - 1];
+                noise_pred
+                    .iter()
+                    .zip(e_prev.iter())
+                    .map(|(&e, &ep)| (3.0 * e as f64 - ep as f64) / 2.0)
+                    .collect()
+            }
+            2 => {
+                // 3rd order: (23·eᵢ − 16·eᵢ₋₁ + 5·eᵢ₋₂) / 12
+                let e_prev1 = &prev_preds[prev_preds.len() - 1];
+                let e_prev2 = &prev_preds[prev_preds.len() - 2];
+                noise_pred
+                    .iter()
+                    .zip(e_prev1.iter())
+                    .zip(e_prev2.iter())
+                    .map(|((&e, &ep1), &ep2)| {
+                        (23.0 * e as f64 - 16.0 * ep1 as f64 + 5.0 * ep2 as f64) / 12.0
+                    })
+                    .collect()
+            }
+            _ => {
+                // 4th order: (55·eᵢ − 59·eᵢ₋₁ + 37·eᵢ₋₂ − 9·eᵢ₋₃) / 24
+                let e_prev1 = &prev_preds[prev_preds.len() - 1];
+                let e_prev2 = &prev_preds[prev_preds.len() - 2];
+                let e_prev3 = &prev_preds[prev_preds.len() - 3];
+                noise_pred
+                    .iter()
+                    .zip(e_prev1.iter())
+                    .zip(e_prev2.iter())
+                    .zip(e_prev3.iter())
+                    .map(|(((&e, &ep1), &ep2), &ep3)| {
+                        (55.0 * e as f64 - 59.0 * ep1 as f64 + 37.0 * ep2 as f64
+                            - 9.0 * ep3 as f64)
+                            / 24.0
+                    })
+                    .collect()
+            }
+        };
+
+        // Standard DDIM update (eta=0) with effective noise
+        let t = self.timesteps[step_idx];
+        let t_prev = if step_idx + 1 < self.timesteps.len() {
+            self.timesteps[step_idx + 1]
+        } else {
+            0
+        };
+
+        let abar_t = self.alphas_cumprod[t];
+        let abar_t_prev = self.alphas_cumprod[t_prev];
+        let sqrt_abar_prev = abar_t_prev.sqrt();
+        let sqrt_one_minus_abar_t = (1.0 - abar_t).sqrt();
+        let sqrt_abar_t = abar_t.sqrt();
+        let dir_coeff = (1.0 - abar_t_prev).sqrt();
+
+        latents
+            .iter()
+            .zip(effective_noise.iter())
+            .map(|(&x_t, &eps)| {
+                let x_t = x_t as f64;
+                let pred_x0 = (x_t - sqrt_one_minus_abar_t * eps) / sqrt_abar_t;
+                let dir_xt = dir_coeff * eps;
+                (sqrt_abar_prev * pred_x0 + dir_xt) as f32
+            })
+            .collect()
     }
 
     /// Sigma to multiply the initial random noise by (always 1.0 for DDIM/Euler).
