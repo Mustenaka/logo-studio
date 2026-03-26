@@ -213,9 +213,9 @@
       "advanced": "Advanced Settings",
       "negativePrompt": "Negative Prompt",
       "steps": "Steps",
-      "stepsHint": "CPU recommended ≤ 20",
+      "stepsHint": "CPU ≤ 20 recommended; DPM++ 2M benefits from ≥ 15",
       "guidance": "CFG Scale",
-      "guidanceHint": "Higher = stronger prompt adherence (fixed 0 for SDXL Turbo)",
+      "guidanceHint": "Higher = stronger prompt adherence; 0 = disabled (SDXL Turbo default)",
       "resolution": "Resolution",
       "negativePromptHint": "what to avoid",
       "seed": "Seed",
@@ -229,8 +229,9 @@
       "hiresSteps": "Steps"
     },
     "sampler": {
-      "ddim": "DDIM (Deterministic)",
-      "eulerA": "Euler Ancestral (Stochastic)"
+      "dpmPP2MKarras": "DPM++ 2M Karras",
+      "ddim": "DDIM",
+      "eulerA": "Euler A"
     },
     "models": {
       "downloaded": "Downloaded",
@@ -243,6 +244,14 @@
     "seedPlaceholder": "Enter seed",
     "actions": {
       "generateProgress": "Generating {step} / {total} steps",
+      "status": {
+        "loadingTokenizer": "Loading tokenizer...",
+        "loadingClip": "Loading CLIP text encoder...",
+        "loadingClip2": "Loading SDXL CLIP2 encoder...",
+        "mergingLora": "Merging LoRA weights...",
+        "loadingUnet": "Loading UNet...",
+        "decodingVae": "Decoding final image..."
+      },
       "downloadModelFirst": "Download a model first",
       "enterPromptFirst": "Enter a prompt to generate",
       "generate": "Generate Logo"

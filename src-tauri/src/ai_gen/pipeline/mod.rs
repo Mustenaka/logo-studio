@@ -21,6 +21,7 @@ use std::{
 
 use candle_core::{safetensors as candle_safetensors, DType, Device, IndexOp, Module, Tensor};
 use candle_transformers::models::stable_diffusion as sd;
+use ndarray::Array2;
 use rand::{Rng, SeedableRng};
 use tokenizers::Tokenizer;
 
@@ -39,13 +40,18 @@ pub enum Sampler {
     Ddim,
     /// Euler Ancestral — stochastic noise each step. More varied outputs.
     EulerA,
+    /// DPM++ 2M Karras — second-order multistep + Karras sigma spacing.
+    /// Best quality-per-step ratio; recommended for ≥15 steps.
+    DpmPP2MKarras,
 }
 
 impl Sampler {
+    /// eta for DDIM/Euler A; DPM++ 2M uses its own step function.
     fn eta(&self) -> f64 {
         match self {
             Sampler::Ddim => 0.0,
             Sampler::EulerA => 1.0,
+            Sampler::DpmPP2MKarras => 0.0,
         }
     }
 }
@@ -108,6 +114,7 @@ pub fn run_pipeline(
     paths: &ModelPaths,
     params: &GenerateParams,
     device: &Device,
+    on_status: impl Fn(&str),
     on_step: impl Fn(usize, usize),
 ) -> Result<Vec<u8>, String> {
     let dtype = DType::F32;
@@ -123,6 +130,7 @@ pub fn run_pipeline(
     };
 
     // ── Tokenize ─────────────────────────────────────────────────────────────
+    on_status("loadingTokenizer");
     eprintln!("[AI-GEN] Loading tokenizer");
     let tokenizer =
         Tokenizer::from_file(&paths.tokenizer).map_err(|e| format!("Load tokenizer: {e}"))?;
@@ -134,6 +142,7 @@ pub fn run_pipeline(
     let unc_t = int_tensor(&unc_tokens, device)?;
 
     // ── CLIP text encoder ─────────────────────────────────────────────────────
+    on_status("loadingClip");
     eprintln!("[AI-GEN] Loading CLIP");
     let text_model =
         sd::build_clip_transformer(&sd_config.clip, &paths.clip_weights, device, dtype)
@@ -150,6 +159,7 @@ pub fn run_pipeline(
     // SDXL UNet cross-attention expects 2048-dim = 768 (CLIP1) + 1280 (CLIP2).
     // For SD 1.5 we skip this and use the 768-dim embeddings as-is.
     let (cond_final, uncond_final) = if matches!(params.model_base, ModelBase::SdXl) {
+        on_status("loadingClip2");
         let clip2_cfg = sd_config.clip2.as_ref().ok_or_else(|| {
             "SDXL sd_config missing clip2 — candle version may be too old".to_string()
         })?;
@@ -183,8 +193,14 @@ pub fn run_pipeline(
         .map_err(|e| format!("Cat embeddings: {e}"))?;
 
     // ── UNet ──────────────────────────────────────────────────────────────────
+    on_status(if params.lora.is_some() {
+        "mergingLora"
+    } else {
+        "loadingUnet"
+    });
     eprintln!("[AI-GEN] Loading UNet");
     let unet_weights = resolve_unet_weights_path(paths, params)?;
+    on_status("loadingUnet");
     let unet = sd_config
         .build_unet(&unet_weights, device, 4, false, dtype)
         .map_err(|e| format!("Build UNet: {e}"))?;
@@ -207,7 +223,11 @@ pub fn run_pipeline(
     // Total steps reported to the caller = base + hires
     let report_total = base_total + hires_total;
 
-    let scheduler = DdimScheduler::with_eta(params.steps, params.sampler.eta());
+    // Build scheduler — DPM++ 2M Karras uses its own constructor.
+    let scheduler = match params.sampler {
+        Sampler::DpmPP2MKarras => DdimScheduler::with_karras(params.steps),
+        _ => DdimScheduler::with_eta(params.steps, params.sampler.eta()),
+    };
     let timesteps = scheduler.timesteps().to_vec();
 
     eprintln!(
@@ -217,6 +237,9 @@ pub fn run_pipeline(
         params.sampler,
         if has_hires { ", hires_fix=on" } else { "" }
     );
+
+    // DPM++ 2M multistep state: (prev_denoised, prev_h)
+    let mut dpm2m_state: Option<(Vec<f32>, f64)> = None;
 
     for (step_idx, &t) in timesteps.iter().enumerate() {
         let latent_input = Tensor::cat(&[&latents, &latents], 0)
@@ -247,14 +270,24 @@ pub fn run_pipeline(
             .and_then(|t| t.to_vec1::<f32>())
             .map_err(|e| format!("Flatten guided: {e}"))?;
 
-        // Generate per-step noise for Euler Ancestral
-        let step_noise = if scheduler.eta > 0.0 {
-            Some(sample_noise_vec(latents_flat.len(), &mut rng))
-        } else {
-            None
+        // Dispatch to the correct sampler step function
+        let new_flat = match params.sampler {
+            Sampler::DpmPP2MKarras => {
+                let prev = dpm2m_state.as_ref().map(|(d, h)| (d.as_slice(), *h));
+                let (new_latents, denoised, h) =
+                    scheduler.step_dpm2m(&latents_flat, &guided_flat, step_idx, prev);
+                dpm2m_state = Some((denoised, h));
+                new_latents
+            }
+            _ => {
+                let step_noise = if scheduler.eta > 0.0 {
+                    Some(sample_noise_vec(latents_flat.len(), &mut rng))
+                } else {
+                    None
+                };
+                scheduler.step(&latents_flat, &guided_flat, step_idx, step_noise.as_deref())
+            }
         };
-
-        let new_flat = scheduler.step(&latents_flat, &guided_flat, step_idx, step_noise.as_deref());
 
         latents = Tensor::from_vec(new_flat, (1usize, 4usize, latent_h, latent_w), device)
             .map_err(|e| format!("Rebuild latents: {e}"))?;
@@ -308,6 +341,7 @@ pub fn run_pipeline(
                 sd::StableDiffusionConfig::sdxl_turbo(None, Some(hires.height), Some(hires.width))
             }
         };
+        on_status("loadingUnet");
         let hires_unet = hires_sd_config
             .build_unet(&unet_weights, device, 4, false, dtype)
             .map_err(|e| format!("Build hires UNet: {e}"))?;
@@ -384,6 +418,7 @@ pub fn run_pipeline(
         }
     };
 
+    on_status("decodingVae");
     eprintln!("[AI-GEN] Decoding with VAE ({}×{})", final_w, final_h);
     let vae = vae_sd_config
         .build_vae(&paths.vae_weights, device, dtype)
@@ -566,6 +601,7 @@ fn merge_sdxl_unet_lora_to_file(
     lora_scale: f32,
     output_path: &Path,
 ) -> Result<(), String> {
+    let merge_start = std::time::Instant::now();
     let cpu = Device::Cpu;
     let mut merged = candle_safetensors::load(base_unet_path, &cpu)
         .map_err(|e| format!("Load base UNet weights: {e}"))?;
@@ -577,7 +613,9 @@ fn merge_sdxl_unet_lora_to_file(
     let mut applied = 0usize;
     let mut skipped = 0usize;
 
-    for module_name in kohya_lora_module_names(&lora_weights) {
+    let module_names = kohya_lora_module_names(&lora_weights);
+    let total_modules = module_names.len();
+    for (module_idx, module_name) in module_names.into_iter().enumerate() {
         let Some(target_prefix) = sdxl_kohya_lora_module_to_candle_prefix(&module_name) else {
             skipped += 1;
             continue;
@@ -618,6 +656,13 @@ fn merge_sdxl_unet_lora_to_file(
             .map_err(|e| format!("Restore dtype for {target_weight_name}: {e}"))?;
         merged.insert(target_weight_name, merged_weight);
         applied += 1;
+
+        if applied == 1 || applied % 25 == 0 || module_idx + 1 == total_modules {
+            eprintln!(
+                "[AI-GEN] LoRA merge progress: {}/{} modules applied",
+                applied, total_modules
+            );
+        }
     }
 
     if applied == 0 {
@@ -631,10 +676,17 @@ fn merge_sdxl_unet_lora_to_file(
         fs::create_dir_all(parent)
             .map_err(|e| format!("Create merged weights directory {}: {e}", parent.display()))?;
     }
+    eprintln!(
+        "[AI-GEN] Writing merged UNet weights to disk: {}",
+        output_path.display()
+    );
     candle_safetensors::save(&merged, output_path)
         .map_err(|e| format!("Save merged UNet weights to {}: {e}", output_path.display()))?;
 
-    eprintln!("[AI-GEN] LoRA merge complete: applied {applied} modules, skipped {skipped}");
+    eprintln!(
+        "[AI-GEN] LoRA merge complete in {:.1}s: applied {applied} modules, skipped {skipped}",
+        merge_start.elapsed().as_secs_f32()
+    );
     Ok(())
 }
 
@@ -717,17 +769,11 @@ fn compute_linear_lora_delta(up: &Tensor, down: &Tensor, scale: f32) -> Result<T
         .to_vec1::<f32>()
         .map_err(|e| format!("Read LoRA down tensor: {e}"))?;
 
-    let mut merged = vec![0f32; out_dim * in_dim];
-    for out_idx in 0..out_dim {
-        for in_idx in 0..in_dim {
-            let mut acc = 0f32;
-            for rank_idx in 0..rank {
-                acc +=
-                    up_values[out_idx * rank + rank_idx] * down_values[rank_idx * in_dim + in_idx];
-            }
-            merged[out_idx * in_dim + in_idx] = acc * scale;
-        }
-    }
+    let up_mat = Array2::from_shape_vec((out_dim, rank), up_values)
+        .map_err(|e| format!("Build linear LoRA up matrix: {e}"))?;
+    let down_mat = Array2::from_shape_vec((rank, in_dim), down_values)
+        .map_err(|e| format!("Build linear LoRA down matrix: {e}"))?;
+    let merged = array_into_raw_vec(up_mat.dot(&down_mat) * scale);
 
     Tensor::from_vec(merged, (out_dim, in_dim), &Device::Cpu)
         .map_err(|e| format!("Build merged linear LoRA tensor: {e}"))
@@ -763,8 +809,6 @@ fn compute_conv_lora_delta(up: &Tensor, down: &Tensor, scale: f32) -> Result<Ten
         ));
     }
 
-    let kernel_h = down_kernel_h.max(up_kernel_h);
-    let kernel_w = down_kernel_w.max(up_kernel_w);
     let up_values = up
         .flatten_all()
         .map_err(|e| format!("Flatten conv LoRA up tensor: {e}"))?
@@ -776,46 +820,105 @@ fn compute_conv_lora_delta(up: &Tensor, down: &Tensor, scale: f32) -> Result<Ten
         .to_vec1::<f32>()
         .map_err(|e| format!("Read conv LoRA down tensor: {e}"))?;
 
-    let mut merged = vec![0f32; out_channels * in_channels * kernel_h * kernel_w];
-    for out_idx in 0..out_channels {
-        for in_idx in 0..in_channels {
-            for kh in 0..kernel_h {
-                for kw in 0..kernel_w {
-                    let mut acc = 0f32;
-                    for rank_idx in 0..rank {
-                        let up_value = up_values[conv_offset(
-                            &up_shape,
-                            out_idx,
-                            rank_idx,
-                            kh.min(up_kernel_h - 1),
-                            kw.min(up_kernel_w - 1),
-                        )];
-                        let down_value = down_values[conv_offset(
-                            &down_shape,
-                            rank_idx,
-                            in_idx,
-                            kh.min(down_kernel_h - 1),
-                            kw.min(down_kernel_w - 1),
-                        )];
-                        acc += up_value * down_value;
-                    }
-                    merged[((out_idx * in_channels + in_idx) * kernel_h + kh) * kernel_w + kw] =
-                        acc * scale;
-                }
-            }
-        }
-    }
+    let merged = if (up_kernel_h, up_kernel_w) == (1, 1) {
+        let down_mat = Array2::from_shape_vec(
+            (rank, in_channels * down_kernel_h * down_kernel_w),
+            down_values,
+        )
+        .map_err(|e| format!("Build conv LoRA down matrix: {e}"))?;
+        let up_mat = Array2::from_shape_vec((out_channels, rank), up_values)
+            .map_err(|e| format!("Build conv LoRA up matrix: {e}"))?;
+        let merged = array_into_raw_vec(up_mat.dot(&down_mat) * scale);
+        (
+            merged,
+            out_channels,
+            in_channels,
+            down_kernel_h,
+            down_kernel_w,
+        )
+    } else {
+        let up_mat = Array2::from_shape_vec(
+            (out_channels * up_kernel_h * up_kernel_w, rank),
+            reorder_up_conv_values(&up_values, out_channels, rank, up_kernel_h, up_kernel_w),
+        )
+        .map_err(|e| format!("Build conv LoRA up matrix: {e}"))?;
+        let down_mat = Array2::from_shape_vec((rank, in_channels), down_values)
+            .map_err(|e| format!("Build conv LoRA down matrix: {e}"))?;
+        let merged_2d = up_mat.dot(&down_mat) * scale;
+        (
+            reorder_merged_conv_values(
+                array_into_raw_vec(merged_2d),
+                out_channels,
+                in_channels,
+                up_kernel_h,
+                up_kernel_w,
+            ),
+            out_channels,
+            in_channels,
+            up_kernel_h,
+            up_kernel_w,
+        )
+    };
 
     Tensor::from_vec(
-        merged,
-        (out_channels, in_channels, kernel_h, kernel_w),
+        merged.0,
+        (merged.1, merged.2, merged.3, merged.4),
         &Device::Cpu,
     )
     .map_err(|e| format!("Build merged conv LoRA tensor: {e}"))
 }
 
-fn conv_offset(shape: &[usize], oc: usize, ic: usize, kh: usize, kw: usize) -> usize {
-    ((oc * shape[1] + ic) * shape[2] + kh) * shape[3] + kw
+fn reorder_up_conv_values(
+    values: &[f32],
+    out_channels: usize,
+    rank: usize,
+    kernel_h: usize,
+    kernel_w: usize,
+) -> Vec<f32> {
+    let mut reordered = vec![0f32; values.len()];
+    for out_idx in 0..out_channels {
+        for kh in 0..kernel_h {
+            for kw in 0..kernel_w {
+                for rank_idx in 0..rank {
+                    let src = ((out_idx * rank + rank_idx) * kernel_h + kh) * kernel_w + kw;
+                    let dst = ((out_idx * kernel_h + kh) * kernel_w + kw) * rank + rank_idx;
+                    reordered[dst] = values[src];
+                }
+            }
+        }
+    }
+    reordered
+}
+
+fn reorder_merged_conv_values(
+    values: Vec<f32>,
+    out_channels: usize,
+    in_channels: usize,
+    kernel_h: usize,
+    kernel_w: usize,
+) -> Vec<f32> {
+    let mut reordered = vec![0f32; values.len()];
+    for out_idx in 0..out_channels {
+        for kh in 0..kernel_h {
+            for kw in 0..kernel_w {
+                for in_idx in 0..in_channels {
+                    let src = ((out_idx * kernel_h + kh) * kernel_w + kw) * in_channels + in_idx;
+                    let dst = ((out_idx * in_channels + in_idx) * kernel_h + kh) * kernel_w + kw;
+                    reordered[dst] = values[src];
+                }
+            }
+        }
+    }
+    reordered
+}
+
+fn array_into_raw_vec<T, D>(array: ndarray::Array<T, D>) -> Vec<T>
+where
+    D: ndarray::Dimension,
+{
+    let (values, offset) = array.into_raw_vec_and_offset();
+    debug_assert_eq!(offset, Some(0));
+    values
 }
 
 fn sdxl_kohya_lora_module_to_candle_prefix(module_name: &str) -> Option<String> {
@@ -985,5 +1088,30 @@ mod tests {
         let values = delta.flatten_all().unwrap().to_vec1::<f32>().unwrap();
 
         assert_eq!(values, vec![23.0, 34.0, 31.0, 46.0]);
+    }
+
+    #[test]
+    fn computes_conv_lora_delta_for_1x1_up_and_3x3_down() {
+        let cpu = Device::Cpu;
+        let up = Tensor::from_vec(vec![2f32], (1, 1, 1, 1), &cpu).unwrap();
+        let down =
+            Tensor::from_vec((1..=9).map(|v| v as f32).collect(), (1, 1, 3, 3), &cpu).unwrap();
+
+        let delta = compute_conv_lora_delta(&up, &down, 0.5).unwrap();
+        let values = delta.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+
+        assert_eq!(values, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]);
+    }
+
+    #[test]
+    fn computes_conv_lora_delta_for_3x3_up_and_1x1_down() {
+        let cpu = Device::Cpu;
+        let up = Tensor::from_vec((1..=9).map(|v| v as f32).collect(), (1, 1, 3, 3), &cpu).unwrap();
+        let down = Tensor::from_vec(vec![2f32], (1, 1, 1, 1), &cpu).unwrap();
+
+        let delta = compute_conv_lora_delta(&up, &down, 0.5).unwrap();
+        let values = delta.flatten_all().unwrap().to_vec1::<f32>().unwrap();
+
+        assert_eq!(values, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]);
     }
 }

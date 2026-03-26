@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAiGen } from '../../modules/ai-gen/useAiGen'
+import { getGenerationProgressText } from '../../modules/ai-gen/progressText'
 import { useAppStore } from '../../store/useAppStore'
 
 const aiGen = useAiGen()
@@ -20,7 +21,7 @@ const customHeight = ref<number>(256)
 const seed = ref<number | null>(null)
 const randomSeed = ref(true)
 // Sampler
-const sampler = ref<'ddim' | 'euler_a'>('ddim')
+const sampler = ref<'ddim' | 'euler_a' | 'dpm_pp_2m_karras'>('dpm_pp_2m_karras')
 // Hires Fix
 const hiresFixEnabled = ref(false)
 const hiresFixWidth = ref<number>(512)
@@ -66,6 +67,14 @@ const resolutionOptions = computed(() => {
 // customWidth/Height always have a value (default 256), so no fallback needed
 const effectiveWidth = computed(() => customWidth.value)
 const effectiveHeight = computed(() => customHeight.value)
+const generationProgressText = computed(() =>
+  getGenerationProgressText(
+    t,
+    aiGen.stepProgress.value,
+    aiGen.generationStatus.value,
+    effectiveSteps.value,
+  ),
+)
 
 function formatBytes(b: number): string {
   if (b >= 1_073_741_824) return `${(b / 1_073_741_824).toFixed(1)} GB`
@@ -118,16 +127,14 @@ watch([customWidth, customHeight], ([w, h]) => {
 
 function clampSteps(val: string) {
   const n = parseInt(val, 10)
-  if (isNaN(n)) return
-  const min = aiGen.selectedModel.value?.base === 'sdxl' ? 1 : 10
-  const max = aiGen.selectedModel.value?.base === 'sdxl' ? 8 : 50
-  customSteps.value = Math.min(max, Math.max(min, n))
+  if (isNaN(n) || n < 1) return
+  customSteps.value = n  // no upper limit
 }
 
 function clampGuidance(val: string) {
   const n = parseFloat(val)
-  if (isNaN(n)) return
-  customGuidance.value = Math.min(15, Math.max(1, n))
+  if (isNaN(n) || n < 0) return
+  customGuidance.value = n  // no upper limit; 0 = disabled (SDXL Turbo)
 }
 
 function handleSelectModel(id: string) {
@@ -346,6 +353,12 @@ function handleSelectModel(id: string) {
         <div class="sampler-group">
           <button
             class="sampler-btn"
+            :class="{ 'sampler-btn--active': sampler === 'dpm_pp_2m_karras' }"
+            :disabled="aiGen.isGenerating.value"
+            @click="sampler = 'dpm_pp_2m_karras'"
+          >{{ t('aiGen.sampler.dpmPP2MKarras') }}</button>
+          <button
+            class="sampler-btn"
             :class="{ 'sampler-btn--active': sampler === 'ddim' }"
             :disabled="aiGen.isGenerating.value"
             @click="sampler = 'ddim'"
@@ -360,57 +373,35 @@ function handleSelectModel(id: string) {
       </div>
 
       <!-- Steps -->
-      <div class="adv-row">
-        <label class="adv-label">
+      <div class="adv-row adv-row--inline">
+        <label class="adv-label" style="flex:1;margin:0">
           {{ t('aiGen.sections.steps') }}
           <span class="adv-hint">{{ t('aiGen.sections.stepsHint') }}</span>
         </label>
-        <div class="adv-control">
-          <input
-            type="range"
-            class="range-input"
-            :min="aiGen.selectedModel.value?.base === 'sdxl' ? 1 : 10"
-            :max="aiGen.selectedModel.value?.base === 'sdxl' ? 8 : 50"
-            :value="effectiveSteps"
-            :disabled="aiGen.isGenerating.value"
-            @input="customSteps = Number(($event.target as HTMLInputElement).value)"
-          />
-          <input
-            type="number"
-            class="adv-num-input"
-            :min="aiGen.selectedModel.value?.base === 'sdxl' ? 1 : 10"
-            :max="aiGen.selectedModel.value?.base === 'sdxl' ? 8 : 50"
-            :value="effectiveSteps"
-            :disabled="aiGen.isGenerating.value"
-            @change="clampSteps(($event.target as HTMLInputElement).value)"
-          />
-        </div>
+        <input
+          type="number"
+          class="adv-num-input adv-num-input--wide"
+          min="1"
+          :value="effectiveSteps"
+          :disabled="aiGen.isGenerating.value"
+          @change="clampSteps(($event.target as HTMLInputElement).value)"
+        />
       </div>
 
-      <!-- CFG Guidance -->
-      <div v-if="(aiGen.selectedModel.value?.defaultGuidance ?? 0) > 0" class="adv-row">
-        <label class="adv-label">
+      <!-- CFG Scale (always visible) -->
+      <div class="adv-row adv-row--inline">
+        <label class="adv-label" style="flex:1;margin:0">
           {{ t('aiGen.sections.guidance') }}
           <span class="adv-hint">{{ t('aiGen.sections.guidanceHint') }}</span>
         </label>
-        <div class="adv-control">
-          <input
-            type="range"
-            class="range-input"
-            min="1" max="15" step="0.5"
-            :value="effectiveGuidance"
-            :disabled="aiGen.isGenerating.value"
-            @input="customGuidance = Number(($event.target as HTMLInputElement).value)"
-          />
-          <input
-            type="number"
-            class="adv-num-input"
-            min="1" max="15" step="0.5"
-            :value="effectiveGuidance"
-            :disabled="aiGen.isGenerating.value"
-            @change="clampGuidance(($event.target as HTMLInputElement).value)"
-          />
-        </div>
+        <input
+          type="number"
+          class="adv-num-input adv-num-input--wide"
+          min="0" step="0.5"
+          :value="effectiveGuidance"
+          :disabled="aiGen.isGenerating.value"
+          @change="clampGuidance(($event.target as HTMLInputElement).value)"
+        />
       </div>
 
       <!-- Resolution -->
@@ -580,7 +571,7 @@ function handleSelectModel(id: string) {
       <template v-if="aiGen.isGenerating.value">
         <!-- Step progress inside the button -->
         <span class="gen-progress-text">
-          {{ t('aiGen.actions.generateProgress', { step: aiGen.stepProgress.value?.step ?? 0, total: aiGen.stepProgress.value?.totalSteps ?? effectiveSteps }) }}
+          {{ generationProgressText }}
         </span>
         <div class="gen-progress-bar">
           <div class="gen-progress-bar__fill" :style="{ width: `${aiGen.stepPercentage.value}%` }" />
@@ -1271,6 +1262,33 @@ function handleSelectModel(id: string) {
   max-height: 0;
   opacity: 0;
 }
+
+/* inline label + input row (Steps, CFG) */
+.adv-row--inline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+/* wider number box without spinner arrows */
+.adv-num-input--wide {
+  width: 72px;
+  flex-shrink: 0;
+  padding: 4px 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--accent-hover);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  text-align: center;
+  outline: none;
+  transition: border-color var(--transition-fast);
+  -moz-appearance: textfield;
+}
+.adv-num-input--wide::-webkit-inner-spin-button,
+.adv-num-input--wide::-webkit-outer-spin-button { -webkit-appearance: none; }
+.adv-num-input--wide:focus { border-color: var(--accent); }
+.adv-num-input--wide:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ── Sampler toggle group ─────────────────────────────────────────── */
 .sampler-group {

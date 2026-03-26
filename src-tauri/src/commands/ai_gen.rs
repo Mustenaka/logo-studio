@@ -299,6 +299,7 @@ async fn run_generate(
 
     let chosen_sampler = match sampler.as_deref() {
         Some("euler_a") => Sampler::EulerA,
+        Some("dpm_pp_2m_karras") => Sampler::DpmPP2MKarras,
         _ => Sampler::Ddim,
     };
 
@@ -328,6 +329,10 @@ async fn run_generate(
     let mid = model_id.clone();
 
     let png_bytes = tokio::task::spawn_blocking(move || {
+        let app_for_status = app_clone.clone();
+        let app_for_step = app_clone.clone();
+        let mid_for_status = mid.clone();
+        let mid_for_step = mid.clone();
         run_pipeline(
             &paths,
             &crate::ai_gen::pipeline::GenerateParams {
@@ -344,11 +349,20 @@ async fn run_generate(
                 hires_fix,
             },
             &device,
+            |status| {
+                let _ = app_for_status.emit(
+                    "ai-gen:status",
+                    serde_json::json!({
+                        "modelId": mid_for_status,
+                        "status": status,
+                    }),
+                );
+            },
             |step, total| {
-                let _ = app_clone.emit(
+                let _ = app_for_step.emit(
                     "ai-gen:step-progress",
                     serde_json::json!({
-                        "modelId": mid,
+                        "modelId": mid_for_step,
                         "step": step,
                         "totalSteps": total,
                     }),

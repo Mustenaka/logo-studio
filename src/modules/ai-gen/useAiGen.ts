@@ -69,6 +69,11 @@ export interface StepProgress {
   totalSteps: number
 }
 
+export interface GenerationStatus {
+  modelId: string
+  status: string
+}
+
 export interface HfTokenStatus {
   hasToken: boolean
   masked: string | null
@@ -118,6 +123,7 @@ export function useAiGen() {
   // Generation state
   const isGenerating = ref(false)
   const stepProgress = ref<StepProgress | null>(null)
+  const generationStatus = ref<GenerationStatus | null>(null)
 
   // HF Token state
   const hfTokenStatus = ref<HfTokenStatus>({ hasToken: false, masked: null })
@@ -168,6 +174,11 @@ export function useAiGen() {
 
     listen<StepProgress>('ai-gen:step-progress', ({ payload }) => {
       stepProgress.value = payload
+      generationStatus.value = null
+    }).then(u => unlisteners.push(u))
+
+    listen<GenerationStatus>('ai-gen:status', ({ payload }) => {
+      generationStatus.value = payload
     }).then(u => unlisteners.push(u))
   }
 
@@ -220,6 +231,7 @@ export function useAiGen() {
     if (isGenerating.value) return
     isGenerating.value = true
     stepProgress.value = null
+    generationStatus.value = null
 
     try {
       const result = await invoke<{
@@ -261,6 +273,7 @@ export function useAiGen() {
     } finally {
       isGenerating.value = false
       stepProgress.value = null
+      generationStatus.value = null
     }
   }
 
@@ -316,7 +329,7 @@ export function useAiGen() {
     device, models, selectedModelId, selectedModel,
     downloadingModelId, downloadProgress, isDownloading,
     authRequiredModelId,
-    isGenerating, stepProgress, stepPercentage,
+    isGenerating, stepProgress, generationStatus, stepPercentage,
     hfTokenStatus, showTokenPanel,
     // Actions
     init, loadModels,

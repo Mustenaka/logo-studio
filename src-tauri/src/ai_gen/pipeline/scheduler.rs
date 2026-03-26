@@ -178,22 +178,27 @@ impl DdimScheduler {
         let sigma_max = sigma_of(alphas_cumprod[NUM_TRAIN_TIMESTEPS - 1]);
         let sigma_min = sigma_of(alphas_cumprod[0]).max(1e-8);
         let rho = 7.0_f64;
-        let n   = num_inference_steps.max(2);
+        let n = num_inference_steps.max(2);
 
         let karras_sigmas: Vec<f64> = (0..n)
             .map(|i| {
                 let frac = i as f64 / (n - 1) as f64;
-                let inv  = sigma_max.powf(1.0 / rho)
+                let inv = sigma_max.powf(1.0 / rho)
                     + frac * (sigma_min.powf(1.0 / rho) - sigma_max.powf(1.0 / rho));
                 inv.powf(rho)
             })
             .collect();
 
-        let timesteps: Vec<usize> = karras_sigmas.iter()
+        let timesteps: Vec<usize> = karras_sigmas
+            .iter()
             .map(|&s| sigma_to_t(s, &alphas_cumprod))
             .collect();
 
-        Self { alphas_cumprod, timesteps, eta: 0.0 }
+        Self {
+            alphas_cumprod,
+            timesteps,
+            eta: 0.0,
+        }
     }
 
     /// DPM++ 2M single step (second-order multistep method).
@@ -207,44 +212,48 @@ impl DdimScheduler {
     /// The caller stores `(denoised_current, h_current)` and passes it as `prev_state` next step.
     pub fn step_dpm2m(
         &self,
-        latents:    &[f32],
+        latents: &[f32],
         noise_pred: &[f32],
-        step_idx:   usize,
-        prev_state: Option<(&[f32], f64)>,  // (prev_denoised, prev_h)
+        step_idx: usize,
+        prev_state: Option<(&[f32], f64)>, // (prev_denoised, prev_h)
     ) -> (Vec<f32>, Vec<f32>, f64) {
         assert_eq!(latents.len(), noise_pred.len());
 
-        let t      = self.timesteps[step_idx];
+        let t = self.timesteps[step_idx];
         let t_prev = if step_idx + 1 < self.timesteps.len() {
             self.timesteps[step_idx + 1]
         } else {
             0
         };
 
-        let abar_t    = self.alphas_cumprod[t];
+        let abar_t = self.alphas_cumprod[t];
         let abar_prev = self.alphas_cumprod[t_prev];
 
-        let alpha_t    = abar_t.sqrt();
-        let sigma_t    = (1.0 - abar_t).sqrt();
+        let alpha_t = abar_t.sqrt();
+        let sigma_t = (1.0 - abar_t).sqrt();
         let alpha_prev = abar_prev.sqrt();
         let sigma_prev = (1.0 - abar_prev).sqrt();
 
         // λ_t = 0.5·ln(ᾱ_t / (1−ᾱ_t))
-        let lambda_t    = 0.5 * (abar_t    / (1.0 - abar_t   )).ln();
+        let lambda_t = 0.5 * (abar_t / (1.0 - abar_t)).ln();
         let lambda_prev = 0.5 * (abar_prev / (1.0 - abar_prev)).ln();
 
         // h = λ_prev − λ_t  (positive: moving from noisy → clean)
         let h = lambda_prev - lambda_t;
 
         // Predicted clean image: D_t = (x_t − σ_t·ε) / α_t
-        let denoised: Vec<f64> = latents.iter().zip(noise_pred.iter())
+        let denoised: Vec<f64> = latents
+            .iter()
+            .zip(noise_pred.iter())
             .map(|(&x, &e)| (x as f64 - sigma_t * e as f64) / alpha_t)
             .collect();
 
         // 2nd-order correction when prev step is available; otherwise 1st-order
         let d_hat: Vec<f64> = if let Some((prev_denoised, prev_h)) = prev_state {
             let r = prev_h / h;
-            denoised.iter().zip(prev_denoised.iter())
+            denoised
+                .iter()
+                .zip(prev_denoised.iter())
                 .map(|(&d_cur, &d_prev)| {
                     (1.0 + 1.0 / (2.0 * r)) * d_cur - (1.0 / (2.0 * r)) * d_prev as f64
                 })
@@ -254,8 +263,10 @@ impl DdimScheduler {
         };
 
         // x_prev = (σ_prev/σ_t)·x_t − α_prev·(exp(−h)−1)·D̂
-        let expm1_neg_h = (-h).exp() - 1.0;  // negative value
-        let new_latents: Vec<f32> = latents.iter().zip(d_hat.iter())
+        let expm1_neg_h = (-h).exp() - 1.0; // negative value
+        let new_latents: Vec<f32> = latents
+            .iter()
+            .zip(d_hat.iter())
             .map(|(&x_t, &d)| {
                 ((sigma_prev / sigma_t) * x_t as f64 - alpha_prev * expm1_neg_h * d) as f32
             })

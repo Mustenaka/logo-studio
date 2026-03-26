@@ -213,9 +213,9 @@
       "advanced": "高级设置",
       "negativePrompt": "负面提示词",
       "steps": "步数",
-      "stepsHint": "CPU 建议 ≤ 20",
+      "stepsHint": "CPU 建议 ≤ 20，DPM++ 2M 建议 ≥ 15",
       "guidance": "CFG Scale",
-      "guidanceHint": "越高越贴近提示词（SDXL Turbo 固定为 0）",
+      "guidanceHint": "越高越贴近提示词；0 = 禁用（SDXL Turbo 默认）",
       "resolution": "分辨率",
       "negativePromptHint": "描述不想出现的内容",
       "seed": "种子",
@@ -229,8 +229,9 @@
       "hiresSteps": "重绘步数"
     },
     "sampler": {
-      "ddim": "DDIM（确定性）",
-      "eulerA": "Euler Ancestral（随机）"
+      "dpmPP2MKarras": "DPM++ 2M Karras",
+      "ddim": "DDIM",
+      "eulerA": "Euler A"
     },
     "models": {
       "downloaded": "已下载",
@@ -243,6 +244,14 @@
     "seedPlaceholder": "输入种子值",
     "actions": {
       "generateProgress": "生成中 {step} / {total} 步",
+      "status": {
+        "loadingTokenizer": "正在加载 tokenizer...",
+        "loadingClip": "正在加载 CLIP 文本编码器...",
+        "loadingClip2": "正在加载 SDXL CLIP2 编码器...",
+        "mergingLora": "正在合并 LoRA 权重...",
+        "loadingUnet": "正在加载 UNet...",
+        "decodingVae": "正在解码最终图像..."
+      },
       "downloadModelFirst": "请先下载模型",
       "enterPromptFirst": "输入提示词后生成",
       "generate": "生成 Logo"
