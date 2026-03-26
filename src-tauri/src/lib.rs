@@ -8,6 +8,7 @@ use commands::ai_gen::{
 };
 use commands::export::export_icon_set;
 use commands::image::{read_image, save_image};
+use commands::project::{read_text_file, write_text_file};
 use commands::segment::segment_image;
 
 #[tauri::command]
@@ -31,6 +32,9 @@ pub fn run() {
             export_icon_set,
             segment_image,
             check_sam2,
+            // project file I/O
+            write_text_file,
+            read_text_file,
             // AI image generation
             ai_gen_device_info,
             ai_gen_list_models,

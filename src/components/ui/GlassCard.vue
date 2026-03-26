@@ -71,7 +71,7 @@ const collapsed = defineModel<boolean>('collapsed', { default: false })
 .glass-card__body {
   padding: var(--space-4);
   /* Extra bottom padding so slider thumbs (14px, overflow 5px below track) clear the card edge */
-  padding-bottom: 22px;
+  padding-bottom: 28px;
 }
 
 .no-pad .glass-card__body {

@@ -232,14 +232,193 @@ export function useExport() {
     }
   }
 
+  async function exportSvg() {
+    if (isExporting.value) return
+    isExporting.value = true
+    isExportError.value = false
+    appStore.setLoading(true, '正在生成 SVG...')
+
+    try {
+      const savePath = await save({
+        title: '导出 SVG',
+        defaultPath: 'logo.svg',
+        filters: [{ name: 'SVG 矢量图', extensions: ['svg'] }],
+      })
+      if (!savePath) return
+
+      const svgStr = buildSvg(canvasStore, bgStore, typoStore)
+      await invoke('write_text_file', { path: savePath, content: svgStr })
+      lastExportMsg.value = tr('exportModule.status.saved', { path: savePath })
+    } catch (error) {
+      console.error('SVG export error:', error)
+      isExportError.value = true
+      lastExportMsg.value = tr('exportModule.status.failed', { error: String(error) })
+    } finally {
+      isExporting.value = false
+      appStore.setLoading(false)
+    }
+  }
+
   return {
     exportPng,
     exportOriginalSize,
     exportIconSet,
+    exportSvg,
     isExporting,
     lastExportMsg,
     isExportError: computed(() => isExportError.value),
   }
+}
+
+// ── SVG builder ───────────────────────────────────────────────────────────────
+
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function buildSvg(
+  canvasStore: ReturnType<typeof useCanvasStore>,
+  bgStore: ReturnType<typeof useBackgroundStore>,
+  typoStore: ReturnType<typeof useTypographyStore>,
+): string {
+  const W = canvasStore.canvasWidth
+  const H = canvasStore.canvasHeight
+  const r = bgStore.borderRadius
+
+  const defs: string[] = []
+  let bgFill = 'none'
+
+  if (bgStore.bgType === 'solid') {
+    bgFill = bgStore.solidColor
+  } else if (bgStore.bgType === 'linear') {
+    const stops = bgStore.stops
+      .slice()
+      .sort((a, b) => a.position - b.position)
+      .map(s => `<stop offset="${s.position}%" stop-color="${s.color}"/>`)
+      .join('')
+    const rad = (bgStore.angle * Math.PI) / 180
+    const x2 = 50 + 50 * Math.sin(rad)
+    const y2 = 50 - 50 * Math.cos(rad)
+    defs.push(
+      `<linearGradient id="bg-grad" x1="50%" y1="50%" x2="${x2.toFixed(1)}%" y2="${y2.toFixed(1)}%" gradientUnits="userSpaceOnUse">${stops}</linearGradient>`,
+    )
+    bgFill = 'url(#bg-grad)'
+  } else if (bgStore.bgType === 'radial') {
+    const stops = bgStore.stops
+      .slice()
+      .sort((a, b) => a.position - b.position)
+      .map(s => `<stop offset="${s.position}%" stop-color="${s.color}"/>`)
+      .join('')
+    defs.push(
+      `<radialGradient id="bg-grad" cx="50%" cy="50%" r="50%">${stops}</radialGradient>`,
+    )
+    bgFill = 'url(#bg-grad)'
+  }
+
+  // Clip path for rounded rect
+  defs.push(
+    `<clipPath id="bg-clip"><rect x="0" y="0" width="${W}" height="${H}" rx="${r}" ry="${r}"/></clipPath>`,
+  )
+
+  // Shadow filter
+  let shadowFilter = ''
+  if (bgStore.shadowEnabled) {
+    defs.push(
+      `<filter id="bg-shadow" x="-20%" y="-20%" width="140%" height="140%">` +
+      `<feDropShadow dx="${bgStore.shadowOffsetX}" dy="${bgStore.shadowOffsetY}" stdDeviation="${bgStore.shadowBlur / 2}" flood-color="${bgStore.shadowColor}"/>` +
+      `</filter>`,
+    )
+    shadowFilter = ' filter="url(#bg-shadow)"'
+  }
+
+  // Text shadow filters
+  const textFilterIds: string[] = []
+  typoStore.textLayers.forEach((layer, i) => {
+    if (layer.shadow) {
+      const fid = `txt-shadow-${i}`
+      defs.push(
+        `<filter id="${fid}">` +
+        `<feDropShadow dx="${layer.shadowOffsetX}" dy="${layer.shadowOffsetY}" stdDeviation="${layer.shadowBlur / 2}" flood-color="${layer.shadowColor}"/>` +
+        `</filter>`,
+      )
+      textFilterIds[i] = fid
+    }
+  })
+
+  // Mask for image (if hasMask use <mask> element)
+  const imgLayer = canvasStore.imageLayer
+  let imageSvg = ''
+  if (imgLayer) {
+    const maskId = 'img-mask'
+    if (imgLayer.hasMask && imgLayer.maskDataUrl) {
+      defs.push(
+        `<mask id="${maskId}">` +
+        `<image x="${imgLayer.x}" y="${imgLayer.y}" width="${imgLayer.width}" height="${imgLayer.height}" href="${imgLayer.maskDataUrl}" preserveAspectRatio="none"/>` +
+        `</mask>`,
+      )
+      const filters: string[] = []
+      if (imgLayer.brightness !== 0 || imgLayer.contrast !== 0 || imgLayer.saturation !== 0) {
+        const b = 1 + imgLayer.brightness / 100
+        const c = 1 + imgLayer.contrast / 100
+        const s = 1 + imgLayer.saturation / 100
+        const fid = 'img-filter'
+        defs.push(
+          `<filter id="${fid}">` +
+          `<feComponentTransfer><feFuncR type="linear" slope="${b * c}"/><feFuncG type="linear" slope="${b * c}"/><feFuncB type="linear" slope="${b * c}"/></feComponentTransfer>` +
+          `<feColorMatrix type="saturate" values="${s}"/>` +
+          `</filter>`,
+        )
+        filters.push(`filter="url(#${fid})"`)
+      }
+      imageSvg =
+        `<image x="${imgLayer.x}" y="${imgLayer.y}" width="${imgLayer.width}" height="${imgLayer.height}" ` +
+        `href="${imgLayer.src}" mask="url(#${maskId})" opacity="${imgLayer.opacity}" ` +
+        `preserveAspectRatio="xMidYMid meet" ${filters.join(' ')}/>`
+    } else {
+      imageSvg =
+        `<image x="${imgLayer.x}" y="${imgLayer.y}" width="${imgLayer.width}" height="${imgLayer.height}" ` +
+        `href="${imgLayer.src}" opacity="${imgLayer.opacity}" preserveAspectRatio="xMidYMid meet"/>`
+    }
+  }
+
+  // Text layers
+  const textsSvg = typoStore.textLayers
+    .filter(l => l.visible)
+    .map((l, i) => {
+      const filterAttr = textFilterIds[i] ? ` filter="url(#${textFilterIds[i]})"` : ''
+      const anchor = l.align === 'left' ? 'start' : l.align === 'right' ? 'end' : 'middle'
+      return (
+        `<text x="${l.x}" y="${l.y}" ` +
+        `font-family="${escapeXml(l.fontFamily)}, sans-serif" ` +
+        `font-size="${l.fontSize}" font-weight="${l.fontWeight}" ` +
+        `fill="${escapeXml(l.color)}" opacity="${l.opacity}" ` +
+        `text-anchor="${anchor}" letter-spacing="${l.letterSpacing}"${filterAttr}>` +
+        `${escapeXml(l.text)}` +
+        `</text>`
+      )
+    })
+    .join('\n    ')
+
+  const defsStr = defs.length ? `<defs>\n    ${defs.join('\n    ')}\n  </defs>` : ''
+
+  const bgRect = bgFill !== 'none'
+    ? `<rect x="0" y="0" width="${W}" height="${H}" rx="${r}" ry="${r}" fill="${bgFill}"${shadowFilter}/>`
+    : ''
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+  ${defsStr}
+  <g clip-path="url(#bg-clip)">
+    ${bgRect}
+    ${imageSvg}
+    ${textsSvg}
+  </g>
+</svg>`
 }
 
 function createScaledCanvasStore(

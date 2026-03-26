@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from './store/useAppStore'
 import { localeOptions } from './i18n'
@@ -7,6 +7,13 @@ import ThemeToggle from './components/ui/ThemeToggle.vue'
 import LeftPanel from './components/layout/LeftPanel.vue'
 import CenterCanvas from './components/layout/CenterCanvas.vue'
 import RightPanel from './components/layout/RightPanel.vue'
+import ResizeHandle from './components/ui/ResizeHandle.vue'
+import { useHistoryStore } from './store/useHistoryStore'
+import { useHistory } from './modules/history/useHistory'
+import { useCanvasStore } from './store/useCanvasStore'
+import { useBackgroundStore } from './store/useBackgroundStore'
+import { useTypographyStore } from './store/useTypographyStore'
+import { useProject } from './modules/project/useProject'
 
 const app = useAppStore()
 const { t } = useI18n()
@@ -15,6 +22,124 @@ const nextLocale = computed(() => {
   const currentIndex = localeOptions.findIndex((option) => option.code === app.locale)
   return localeOptions[(currentIndex + 1) % localeOptions.length] ?? localeOptions[0]
 })
+
+// ── Undo / Redo ─────────────────────────────────────────────────────────────
+const historyStore = useHistoryStore()
+const { undo, redo, initHistory, snapshot } = useHistory()
+const canvasStore = useCanvasStore()
+const bgStore = useBackgroundStore()
+const typoStore = useTypographyStore()
+
+// Debounced auto-snapshot on any store change
+let _snapTimer: ReturnType<typeof setTimeout> | null = null
+let _isRestoring = false
+
+function scheduleSnapshot() {
+  if (_isRestoring) return
+  if (_snapTimer) clearTimeout(_snapTimer)
+  _snapTimer = setTimeout(() => {
+    snapshot()
+  }, 300)
+}
+
+onMounted(() => {
+  initHistory()
+
+  // Watch all relevant state for changes
+  watch(
+    () => JSON.stringify({
+      img: canvasStore.imageLayer ? {
+        id: canvasStore.imageLayer.id,
+        x: canvasStore.imageLayer.x,
+        y: canvasStore.imageLayer.y,
+        width: canvasStore.imageLayer.width,
+        height: canvasStore.imageLayer.height,
+        opacity: canvasStore.imageLayer.opacity,
+        brightness: canvasStore.imageLayer.brightness,
+        contrast: canvasStore.imageLayer.contrast,
+        saturation: canvasStore.imageLayer.saturation,
+        hasMask: canvasStore.imageLayer.hasMask,
+      } : null,
+      bg: {
+        bgType: bgStore.bgType,
+        stops: bgStore.stops,
+        angle: bgStore.angle,
+        solidColor: bgStore.solidColor,
+        borderRadius: bgStore.borderRadius,
+        shadowEnabled: bgStore.shadowEnabled,
+        shadowBlur: bgStore.shadowBlur,
+        shadowOffsetY: bgStore.shadowOffsetY,
+        innerGlow: bgStore.innerGlow,
+      },
+      ty: typoStore.textLayers,
+    }),
+    () => scheduleSnapshot(),
+    { deep: false }
+  )
+})
+
+function doUndo() {
+  _isRestoring = true
+  undo()
+  setTimeout(() => { _isRestoring = false }, 50)
+}
+
+function doRedo() {
+  _isRestoring = true
+  redo()
+  setTimeout(() => { _isRestoring = false }, 50)
+}
+
+function handleKeyDown(e: KeyboardEvent) {
+  const ctrl = e.ctrlKey || e.metaKey
+  if (!ctrl) return
+  if (e.key === 'z' && !e.shiftKey) {
+    e.preventDefault()
+    doUndo()
+  } else if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
+    e.preventDefault()
+    doRedo()
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', handleKeyDown))
+onUnmounted(() => window.removeEventListener('keydown', handleKeyDown))
+
+// ── Project save/load ────────────────────────────────────────────────────────
+const { saveProject, openProject, newProject, currentFilePath } = useProject()
+
+// Ctrl+S / Ctrl+Shift+S / Ctrl+O
+onMounted(() => window.addEventListener('keydown', handleProjectKeys))
+onUnmounted(() => window.removeEventListener('keydown', handleProjectKeys))
+
+function handleProjectKeys(e: KeyboardEvent) {
+  const ctrl = e.ctrlKey || e.metaKey
+  if (!ctrl) return
+  if (e.key === 's') {
+    e.preventDefault()
+    saveProject(e.shiftKey)
+  } else if (e.key === 'o') {
+    e.preventDefault()
+    openProject()
+  }
+}
+
+// ── Panel resize ────────────────────────────────────────────────────────────
+const LEFT_MIN = 180
+const LEFT_MAX = 480
+const RIGHT_MIN = 220
+const RIGHT_MAX = 520
+
+const leftWidth = ref(260)
+const rightWidth = ref(300)
+
+function onLeftDrag(delta: number) {
+  leftWidth.value = Math.max(LEFT_MIN, Math.min(LEFT_MAX, leftWidth.value + delta))
+}
+
+function onRightDrag(delta: number) {
+  rightWidth.value = Math.max(RIGHT_MIN, Math.min(RIGHT_MAX, rightWidth.value - delta))
+}
 
 // ── Toast 复制功能 ──────────────────────────────────────────
 const toastCopied = ref(false)
@@ -53,10 +178,61 @@ function handleToastClick() {
           </svg>
         </div>
         <span class="app-name">{{ t('app.title') }}</span>
-        <span class="app-badge">v0.1</span>
+        <span class="app-badge">v{{ __APP_VERSION__ }}</span>
+
+        <div class="project-btns">
+          <button class="btn-ghost proj-btn" title="新建项目" @click="newProject()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="12" y1="18" x2="12" y2="12"/>
+              <line x1="9" y1="15" x2="15" y2="15"/>
+            </svg>
+            新建
+          </button>
+          <button class="btn-ghost proj-btn" title="打开项目 (Ctrl+O)" @click="openProject()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+            </svg>
+            打开
+          </button>
+          <button class="btn-ghost proj-btn" title="保存项目 (Ctrl+S)" @click="saveProject(false)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/>
+              <polyline points="17 21 17 13 7 13 7 21"/>
+              <polyline points="7 3 7 8 15 8"/>
+            </svg>
+            保存
+          </button>
+          <span v-if="currentFilePath" class="proj-filename" :title="currentFilePath">
+            {{ currentFilePath.split(/[\\/]/).pop() }}
+          </span>
+        </div>
       </div>
 
       <div class="title-bar__actions">
+        <div class="history-btns">
+          <button
+            class="btn-ghost icon-btn"
+            :disabled="!historyStore.canUndo"
+            title="撤销 (Ctrl+Z)"
+            @click="doUndo()"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-9-9 9 9 0 00-6 2.3L3 13"/>
+            </svg>
+          </button>
+          <button
+            class="btn-ghost icon-btn"
+            :disabled="!historyStore.canRedo"
+            title="重做 (Ctrl+Y)"
+            @click="doRedo()"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 7v6h-6"/><path d="M3 17a9 9 0 019-9 9 9 0 016 2.3l3 2.7"/>
+            </svg>
+          </button>
+        </div>
         <ThemeToggle />
         <button
           class="btn-ghost lang-btn"
@@ -70,9 +246,17 @@ function handleToastClick() {
     </header>
 
     <div class="workspace">
-      <LeftPanel />
-      <CenterCanvas />
-      <RightPanel />
+      <div class="panel-wrap" :style="{ width: leftWidth + 'px' }">
+        <LeftPanel />
+      </div>
+      <ResizeHandle @drag="onLeftDrag" />
+      <div class="panel-center">
+        <CenterCanvas />
+      </div>
+      <ResizeHandle @drag="onRightDrag" />
+      <div class="panel-wrap" :style="{ width: rightWidth + 'px' }">
+        <RightPanel />
+      </div>
     </div>
 
     <Transition name="fade">
@@ -160,11 +344,79 @@ function handleToastClick() {
   gap: var(--space-2);
 }
 
+.history-btns {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-right: 1px solid var(--border);
+  padding-right: var(--space-2);
+  margin-right: 2px;
+}
+
+.icon-btn {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.icon-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.project-btns {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-left: 1px solid var(--border);
+  padding-left: var(--space-2);
+  margin-left: 4px;
+}
+
+.proj-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 4px 8px;
+  height: 28px;
+  white-space: nowrap;
+}
+
+.proj-filename {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 4px;
+  border-left: 1px solid var(--border);
+  margin-left: 4px;
+}
+
 .workspace {
   flex: 1;
-  display: grid;
-  grid-template-columns: 260px 1fr 300px;
+  display: flex;
+  flex-direction: row;
   overflow: hidden;
+  min-height: 0;
+}
+
+.panel-wrap {
+  flex-shrink: 0;
+  height: 100%;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.panel-center {
+  flex: 1;
+  height: 100%;
+  overflow: hidden;
+  min-width: 400px;
 }
 
 .loading-overlay {

@@ -8,10 +8,11 @@ import { useTypographyStore } from '../../store/useTypographyStore'
 import { useCanvasStore } from '../../store/useCanvasStore'
 import { useExport, getIconPresetOptions, type IconPresetId } from '../../modules/export/useExport'
 
+
 const bgStore = useBackgroundStore()
 const typoStore = useTypographyStore()
 const canvasStore = useCanvasStore()
-const { exportPng, exportOriginalSize, exportIconSet, isExporting, lastExportMsg, isExportError } = useExport()
+const { exportPng, exportOriginalSize, exportIconSet, exportSvg, isExporting, lastExportMsg, isExportError } = useExport()
 const { t } = useI18n()
 
 const activePanel = ref<'background' | 'typography' | 'export'>('background')
@@ -32,6 +33,7 @@ const bgShapeCollapsed = ref(false)
 const typoLayersCollapsed = ref(false)
 const typoEditorCollapsed = ref(false)
 const exportSingleCollapsed = ref(false)
+const exportSvgCollapsed = ref(false)
 const exportIconCollapsed = ref(false)
 </script>
 
@@ -226,6 +228,21 @@ const exportIconCollapsed = ref(false)
           </div>
         </GlassCard>
 
+        <GlassCard title="SVG 矢量导出" collapsible v-model:collapsed="exportSvgCollapsed">
+          <p class="export-hint">将当前设计导出为可缩放 SVG 文件，保留背景渐变与文字图层。</p>
+          <button
+            class="btn-accent export-btn"
+            :disabled="isExporting"
+            @click="exportSvg()"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            导出 SVG
+          </button>
+        </GlassCard>
+
         <GlassCard :title="t('rightPanel.export.iconSet')" collapsible v-model:collapsed="exportIconCollapsed">
           <p class="export-hint">{{ t('rightPanel.export.iconSetHint') }}</p>
           <div class="icon-presets">
@@ -344,6 +361,7 @@ const exportIconCollapsed = ref(false)
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  padding-bottom: 32px;
 }
 
 .preset-grid {
@@ -520,7 +538,7 @@ const exportIconCollapsed = ref(false)
 .text-editor {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
 .field-group {
   display: flex;
